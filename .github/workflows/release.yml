@@ -33,17 +33,7 @@ jobs:
           CURRENT_VERSION=$(node -p "require('./package.json').version")
           echo "current_version=$CURRENT_VERSION" >> "$GITHUB_OUTPUT"
           if git rev-parse HEAD^ >/dev/null 2>&1; then
-            PREVIOUS_VERSION=$(node <<-'NODE'
-              const { execSync } = require('node:child_process');
-              try {
-                const data = execSync('git show HEAD^:package.json', { stdio: ['ignore', 'pipe', 'ignore'] });
-                const json = JSON.parse(data.toString());
-                if (json && typeof json.version === 'string') {
-                  process.stdout.write(json.version);
-                }
-              } catch (error) {}
-            NODE
-            )
+            PREVIOUS_VERSION=$(node -e "const { execSync } = require('node:child_process'); try { const data = execSync('git show HEAD^:package.json', { stdio: ['ignore', 'pipe', 'ignore'] }); const json = JSON.parse(data.toString()); if (json && typeof json.version === 'string') { process.stdout.write(json.version); } } catch (error) {}")
             PREVIOUS_VERSION=${PREVIOUS_VERSION//$'\n'/}
           else
             PREVIOUS_VERSION=""
