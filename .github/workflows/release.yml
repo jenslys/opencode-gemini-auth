@@ -42,8 +42,8 @@ jobs:
                   process.stdout.write(json.version);
                 }
               } catch (error) {}
-            NODE
-            )
+NODE
+)
             PREVIOUS_VERSION=${PREVIOUS_VERSION//$'\n'/}
           else
             PREVIOUS_VERSION=""
