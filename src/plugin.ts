@@ -1,3 +1,4 @@
+import { GEMINI_REDIRECT_URI } from "./constants";
 import { authorizeGemini, exchangeGemini } from "./gemini/oauth";
 import type { GeminiTokenExchangeResult } from "./gemini/oauth";
 import { accessTokenExpired, isOAuthAuth } from "./plugin/auth";
@@ -5,6 +6,7 @@ import { promptProjectId } from "./plugin/cli";
 import { ensureProjectContext } from "./plugin/project";
 import { prepareGeminiRequest, transformGeminiResponse } from "./plugin/request";
 import { refreshAccessToken } from "./plugin/token";
+import { startOAuthListener, type OAuthListener } from "./plugin/server";
 import type {
   GetAuth,
   LoaderResult,
@@ -74,14 +76,71 @@ export const GeminiCLIOAuthPlugin = async (
         type: "oauth",
         authorize: async () => {
           console.log("\n=== Google Gemini OAuth Setup ===");
-          console.log("1. You'll be asked to sign in to your Google account and grant permission.");
-          console.log("2. After you approve, the browser will try to redirect to a 'localhost' page.");
-          console.log("3. This page will show an error like 'This site can’t be reached'. This is perfectly normal and means it worked!");
-          console.log("4. Once you see that error, copy the entire URL from the address bar, paste it back here, and press Enter.");
-          console.log("\n")
+
+          let listener: OAuthListener | null = null;
+          try {
+            listener = await startOAuthListener();
+            const { host } = new URL(GEMINI_REDIRECT_URI);
+            console.log("1. You'll be asked to sign in to your Google account and grant permission.");
+            console.log(
+              `2. We'll automatically capture the browser redirect on http://${host}. No need to paste anything back here.`,
+            );
+            console.log("3. Once you see the 'Authentication complete' page in your browser, return to this terminal.");
+          } catch (error) {
+            console.log("1. You'll be asked to sign in to your Google account and grant permission.");
+            console.log("2. After you approve, the browser will try to redirect to a 'localhost' page.");
+            console.log(
+              "3. This page will show an error like 'This site can’t be reached'. This is perfectly normal and means it worked!",
+            );
+            console.log(
+              "4. Once you see that error, copy the entire URL from the address bar, paste it back here, and press Enter.",
+            );
+            if (error instanceof Error) {
+              console.log(`\nWarning: Couldn't start the local callback listener (${error.message}). Falling back to manual copy/paste.`);
+            } else {
+              console.log("\nWarning: Couldn't start the local callback listener. Falling back to manual copy/paste.");
+            }
+          }
+          console.log("\n");
 
           const projectId = await promptProjectId();
           const authorization = await authorizeGemini(projectId);
+
+          if (listener) {
+            return {
+              url: authorization.url,
+              instructions:
+                "Complete the sign-in flow in your browser. We'll automatically detect the redirect back to localhost.",
+              method: "auto",
+              callback: async (): Promise<GeminiTokenExchangeResult> => {
+                try {
+                  const callbackUrl = await listener.waitForCallback();
+                  const code = callbackUrl.searchParams.get("code");
+                  const state = callbackUrl.searchParams.get("state");
+
+                  if (!code || !state) {
+                    return {
+                      type: "failed",
+                      error: "Missing code or state in callback URL",
+                    };
+                  }
+
+                  return await exchangeGemini(code, state);
+                } catch (error) {
+                  return {
+                    type: "failed",
+                    error: error instanceof Error ? error.message : "Unknown error",
+                  };
+                } finally {
+                  try {
+                    await listener?.close();
+                  } catch {
+                    // Ignore close errors.
+                  }
+                }
+              },
+            };
+          }
 
           return {
             url: authorization.url,
