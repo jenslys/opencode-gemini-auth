@@ -39,8 +39,6 @@ export function prepareGeminiRequest(
 ): { request: RequestInfo; init: RequestInit; streaming: boolean } {
   const baseInit: RequestInit = { ...init };
   const headers = new Headers(init?.headers ?? {});
-  headers.set("Authorization", `Bearer ${accessToken}`);
-  headers.delete("x-api-key");
 
   if (!isGenerativeLanguageRequest(input)) {
     return {
@@ -49,6 +47,9 @@ export function prepareGeminiRequest(
       streaming: false,
     };
   }
+
+  headers.set("Authorization", `Bearer ${accessToken}`);
+  headers.delete("x-api-key");
 
   const match = input.match(/\/models\/([^:]+):(\w+)/);
   if (!match) {
