@@ -9,6 +9,24 @@ import type {
   ProjectContextResult,
 } from "./types";
 
+const projectContextResultCache = new Map<string, ProjectContextResult>();
+const projectContextPendingCache = new Map<string, Promise<ProjectContextResult>>();
+
+function getCacheKey(auth: OAuthAuthDetails): string | undefined {
+  const refresh = auth.refresh?.trim();
+  return refresh ? refresh : undefined;
+}
+
+export function invalidateProjectContextCache(refresh?: string): void {
+  if (!refresh) {
+    projectContextPendingCache.clear();
+    projectContextResultCache.clear();
+    return;
+  }
+  projectContextPendingCache.delete(refresh);
+  projectContextResultCache.delete(refresh);
+}
+
 export async function loadManagedProject(accessToken: string): Promise<{
   managedProjectId?: string;
   needsOnboarding: boolean;
@@ -157,42 +175,79 @@ export async function ensureProjectContext(
   auth: OAuthAuthDetails,
   client: PluginClient,
 ): Promise<ProjectContextResult> {
-  if (!auth.access) {
+  const accessToken = auth.access;
+  if (!accessToken) {
     return { auth, effectiveProjectId: "" };
   }
 
-  const parts = parseRefreshParts(auth.refresh);
-  if (parts.projectId || parts.managedProjectId) {
-    return {
-      auth,
-      effectiveProjectId: parts.projectId || parts.managedProjectId || "",
-    };
+  const cacheKey = getCacheKey(auth);
+  if (cacheKey) {
+    const cached = projectContextResultCache.get(cacheKey);
+    if (cached) {
+      return cached;
+    }
+    const pending = projectContextPendingCache.get(cacheKey);
+    if (pending) {
+      return pending;
+    }
   }
 
-  const loadResult = await loadManagedProject(auth.access);
-  let managedProjectId = loadResult.managedProjectId;
+  const resolveContext = async (): Promise<ProjectContextResult> => {
+    const parts = parseRefreshParts(auth.refresh);
+    if (parts.projectId || parts.managedProjectId) {
+      return {
+        auth,
+        effectiveProjectId: parts.projectId || parts.managedProjectId || "",
+      };
+    }
 
-  if (!managedProjectId && loadResult.needsOnboarding) {
-    managedProjectId = await onboardManagedProject(auth.access);
+    const loadResult = await loadManagedProject(accessToken);
+    let managedProjectId = loadResult.managedProjectId;
+
+    if (!managedProjectId && loadResult.needsOnboarding) {
+      managedProjectId = await onboardManagedProject(accessToken);
+    }
+
+    if (managedProjectId) {
+      const updatedAuth: OAuthAuthDetails = {
+        ...auth,
+        refresh: formatRefreshParts({
+          refreshToken: parts.refreshToken,
+          projectId: parts.projectId,
+          managedProjectId,
+        }),
+      };
+
+      await client.auth.set({
+        path: { id: "gemini-cli" },
+        body: updatedAuth,
+      });
+
+      return { auth: updatedAuth, effectiveProjectId: managedProjectId };
+    }
+
+    return { auth, effectiveProjectId: "" };
+  };
+
+  if (!cacheKey) {
+    return resolveContext();
   }
 
-  if (managedProjectId) {
-    const updatedAuth: OAuthAuthDetails = {
-      ...auth,
-      refresh: formatRefreshParts({
-        refreshToken: parts.refreshToken,
-        projectId: parts.projectId,
-        managedProjectId,
-      }),
-    };
-
-    await client.auth.set({
-      path: { id: "gemini-cli" },
-      body: updatedAuth,
+  const promise = resolveContext()
+    .then((result) => {
+      const nextKey = getCacheKey(result.auth) ?? cacheKey;
+      projectContextPendingCache.delete(cacheKey);
+      projectContextResultCache.set(nextKey, result);
+      if (nextKey !== cacheKey) {
+        projectContextResultCache.delete(cacheKey);
+      }
+      return result;
+    })
+    .catch((error) => {
+      projectContextPendingCache.delete(cacheKey);
+      throw error;
     });
 
-    return { auth: updatedAuth, effectiveProjectId: managedProjectId };
-  }
-
-  return { auth, effectiveProjectId: "" };
+  projectContextPendingCache.set(cacheKey, promise);
+  return promise;
 }

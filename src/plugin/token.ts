@@ -1,6 +1,54 @@
 import { GEMINI_CLIENT_ID, GEMINI_CLIENT_SECRET } from "../constants";
 import { formatRefreshParts, parseRefreshParts } from "./auth";
+import { invalidateProjectContextCache } from "./project";
 import type { OAuthAuthDetails, PluginClient, RefreshParts } from "./types";
+
+interface OAuthErrorPayload {
+  error?:
+    | string
+    | {
+        code?: string;
+        status?: string;
+        message?: string;
+      };
+  error_description?: string;
+}
+
+function parseOAuthErrorPayload(text: string | undefined): { code?: string; description?: string } {
+  if (!text) {
+    return {};
+  }
+
+  try {
+    const payload = JSON.parse(text) as OAuthErrorPayload;
+    if (!payload || typeof payload !== "object") {
+      return { description: text };
+    }
+
+    let code: string | undefined;
+    if (typeof payload.error === "string") {
+      code = payload.error;
+    } else if (payload.error && typeof payload.error === "object") {
+      code = payload.error.status ?? payload.error.code;
+      if (!payload.error_description && payload.error.message) {
+        return { code, description: payload.error.message };
+      }
+    }
+
+    const description = payload.error_description;
+    if (description) {
+      return { code, description };
+    }
+
+    if (payload.error && typeof payload.error === "object" && payload.error.message) {
+      return { code, description: payload.error.message };
+    }
+
+    return { code };
+  } catch {
+    return { description: text };
+  }
+}
 
 export async function refreshAccessToken(
   auth: OAuthAuthDetails,
@@ -26,6 +74,41 @@ export async function refreshAccessToken(
     });
 
     if (!response.ok) {
+      let errorText: string | undefined;
+      try {
+        errorText = await response.text();
+      } catch {
+        // Ignore body parsing failures; we'll fall back to status only.
+      }
+
+      const { code, description } = parseOAuthErrorPayload(errorText);
+      const details = [code, description ?? errorText].filter(Boolean).join(": ");
+      const baseMessage = `Gemini token refresh failed (${response.status} ${response.statusText})`;
+      console.warn(`[Gemini OAuth] ${details ? `${baseMessage} - ${details}` : baseMessage}`);
+
+      if (code === "invalid_grant") {
+        console.warn(
+          "[Gemini OAuth] Google revoked the stored refresh token. Run `opencode auth login` and reauthenticate the Google provider.",
+        );
+        invalidateProjectContextCache(auth.refresh);
+        try {
+          const clearedAuth: OAuthAuthDetails = {
+            type: "oauth",
+            refresh: formatRefreshParts({
+              refreshToken: "",
+              projectId: parts.projectId,
+              managedProjectId: parts.managedProjectId,
+            }),
+          };
+          await client.auth.set({
+            path: { id: "gemini-cli" },
+            body: clearedAuth,
+          });
+        } catch (storeError) {
+          console.error("Failed to clear stored Gemini OAuth credentials:", storeError);
+        }
+      }
+
       return undefined;
     }
 
@@ -52,10 +135,11 @@ export async function refreshAccessToken(
       path: { id: "gemini-cli" },
       body: updatedAuth,
     });
+    invalidateProjectContextCache(auth.refresh);
 
     return updatedAuth;
   } catch (error) {
-    console.error("Failed to refresh Gemini access token:", error);
+    console.error("Failed to refresh Gemini access token due to an unexpected error:", error);
     return undefined;
   }
 }

@@ -4,7 +4,11 @@ import type { GeminiTokenExchangeResult } from "./gemini/oauth";
 import { accessTokenExpired, isOAuthAuth } from "./plugin/auth";
 import { promptProjectId } from "./plugin/cli";
 import { ensureProjectContext } from "./plugin/project";
-import { prepareGeminiRequest, transformGeminiResponse } from "./plugin/request";
+import {
+  isGenerativeLanguageRequest,
+  prepareGeminiRequest,
+  transformGeminiResponse,
+} from "./plugin/request";
 import { refreshAccessToken } from "./plugin/token";
 import { startOAuthListener, type OAuthListener } from "./plugin/server";
 import type {
@@ -37,6 +41,10 @@ export const GeminiCLIOAuthPlugin = async (
       return {
         apiKey: "",
         async fetch(input, init) {
+          if (!isGenerativeLanguageRequest(input)) {
+            return fetch(input, init);
+          }
+
           const latestAuth = await getAuth();
           if (!isOAuthAuth(latestAuth)) {
             return fetch(input, init);

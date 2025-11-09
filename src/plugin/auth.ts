@@ -1,5 +1,7 @@
 import type { AuthDetails, OAuthAuthDetails, RefreshParts } from "./types";
 
+const ACCESS_TOKEN_EXPIRY_BUFFER_MS = 60 * 1000;
+
 export function isOAuthAuth(auth: AuthDetails): auth is OAuthAuthDetails {
   return auth.type === "oauth";
 }
@@ -23,5 +25,5 @@ export function accessTokenExpired(auth: OAuthAuthDetails): boolean {
   if (!auth.access || typeof auth.expires !== "number") {
     return true;
   }
-  return auth.expires <= Date.now();
+  return auth.expires <= Date.now() + ACCESS_TOKEN_EXPIRY_BUFFER_MS;
 }

@@ -5,7 +5,7 @@ import {
 
 const STREAM_ACTION = "streamGenerateContent";
 
-function isGenerativeLanguageRequest(input: RequestInfo): input is string {
+export function isGenerativeLanguageRequest(input: RequestInfo): input is string {
   return typeof input === "string" && input.includes("generativelanguage.googleapis.com");
 }
 
@@ -68,28 +68,36 @@ export function prepareGeminiRequest(
 
   let body = baseInit.body;
   if (typeof baseInit.body === "string" && baseInit.body) {
-    try {
-      const parsedBody = JSON.parse(baseInit.body) as Record<string, unknown>;
-      const requestPayload: Record<string, unknown> = { ...parsedBody };
+    const trimmedPayload = baseInit.body.trim();
+    const looksCodeAssistPayload =
+      trimmedPayload.startsWith("{") &&
+      trimmedPayload.includes('"project"') &&
+      trimmedPayload.includes('"request"');
 
-      if ("system_instruction" in requestPayload) {
-        requestPayload.systemInstruction = requestPayload.system_instruction;
-        delete requestPayload.system_instruction;
+    if (!looksCodeAssistPayload) {
+      try {
+        const parsedBody = JSON.parse(baseInit.body) as Record<string, unknown>;
+        const requestPayload: Record<string, unknown> = { ...parsedBody };
+
+        if ("system_instruction" in requestPayload) {
+          requestPayload.systemInstruction = requestPayload.system_instruction;
+          delete requestPayload.system_instruction;
+        }
+
+        if ("model" in requestPayload) {
+          delete requestPayload.model;
+        }
+
+        const wrappedBody = {
+          project: projectId,
+          model,
+          request: requestPayload,
+        };
+
+        body = JSON.stringify(wrappedBody);
+      } catch (error) {
+        console.error("Failed to transform Gemini request body:", error);
       }
-
-      if ("model" in requestPayload) {
-        delete requestPayload.model;
-      }
-
-      const wrappedBody = {
-        project: projectId,
-        model,
-        request: requestPayload,
-      };
-
-      body = JSON.stringify(wrappedBody);
-    } catch (error) {
-      console.error("Failed to transform Gemini request body:", error);
     }
   }
 
