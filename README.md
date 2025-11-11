@@ -62,6 +62,15 @@ When you want Opencode to use a local checkout of this plugin, point the
 Replace `/absolute/path/to/opencode-gemini-auth` with the absolute path to
 your local clone.
 
+## Manual Google Cloud Setup
+
+If automatic provisioning fails, use the console:
+
+1. Go to the Google Cloud Console and create (or select) a project, e.g. `gemini`.
+2. Select that project.
+3. Enable the **Gemini for Google Cloud API** (`cloudaicompanion.googleapis.com`).
+4. Re-run `opencode auth login` and enter the project **ID** (not the display name).
+
 ## Debugging Gemini Requests
 
 Set `OPENCODE_GEMINI_DEBUG=1` in the environment when you run an Opencode
