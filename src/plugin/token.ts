@@ -1,5 +1,10 @@
-import { GEMINI_CLIENT_ID, GEMINI_CLIENT_SECRET } from "../constants";
+import {
+  GEMINI_CLIENT_ID,
+  GEMINI_CLIENT_SECRET,
+  GEMINI_PROVIDER_ID,
+} from "../constants";
 import { formatRefreshParts, parseRefreshParts } from "./auth";
+import { clearCachedAuth, storeCachedAuth } from "./cache";
 import { invalidateProjectContextCache } from "./project";
 import type { OAuthAuthDetails, PluginClient, RefreshParts } from "./types";
 
@@ -101,7 +106,7 @@ export async function refreshAccessToken(
             }),
           };
           await client.auth.set({
-            path: { id: "gemini-cli" },
+            path: { id: GEMINI_PROVIDER_ID },
             body: clearedAuth,
           });
         } catch (storeError) {
@@ -131,11 +136,18 @@ export async function refreshAccessToken(
       refresh: formatRefreshParts(refreshedParts),
     };
 
-    await client.auth.set({
-      path: { id: "gemini-cli" },
-      body: updatedAuth,
-    });
+    storeCachedAuth(updatedAuth);
     invalidateProjectContextCache(auth.refresh);
+
+    const refreshTokenRotated =
+      typeof payload.refresh_token === "string" && payload.refresh_token !== parts.refreshToken;
+
+    if (refreshTokenRotated) {
+      await client.auth.set({
+        path: { id: GEMINI_PROVIDER_ID },
+        body: updatedAuth,
+      });
+    }
 
     return updatedAuth;
   } catch (error) {

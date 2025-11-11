@@ -1,6 +1,7 @@
 import {
   CODE_ASSIST_HEADERS,
   GEMINI_CODE_ASSIST_ENDPOINT,
+  GEMINI_PROVIDER_ID,
 } from "../constants";
 import { formatRefreshParts, parseRefreshParts } from "./auth";
 import type {
@@ -219,7 +220,7 @@ export async function ensureProjectContext(
       };
 
       await client.auth.set({
-        path: { id: "gemini-cli" },
+        path: { id: GEMINI_PROVIDER_ID },
         body: updatedAuth,
       });
 

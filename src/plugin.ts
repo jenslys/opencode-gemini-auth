@@ -1,4 +1,4 @@
-import { GEMINI_REDIRECT_URI } from "./constants";
+import { GEMINI_PROVIDER_ID, GEMINI_REDIRECT_URI } from "./constants";
 import { authorizeGemini, exchangeGemini } from "./gemini/oauth";
 import type { GeminiTokenExchangeResult } from "./gemini/oauth";
 import { accessTokenExpired, isOAuthAuth } from "./plugin/auth";
@@ -24,7 +24,7 @@ export const GeminiCLIOAuthPlugin = async (
   { client }: PluginContext,
 ): Promise<PluginResult> => ({
   auth: {
-    provider: "google",
+    provider: GEMINI_PROVIDER_ID,
     loader: async (getAuth: GetAuth, provider: Provider): Promise<LoaderResult | null> => {
       const auth = await getAuth();
       if (!isOAuthAuth(auth)) {
@@ -193,7 +193,7 @@ export const GeminiCLIOAuthPlugin = async (
         },
       },
       {
-        provider: "google",
+        provider: GEMINI_PROVIDER_ID,
         label: "Manually enter API Key",
         type: "api",
       },
