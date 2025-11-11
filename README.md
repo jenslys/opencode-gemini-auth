@@ -41,6 +41,14 @@ opencode  # Reinstalls latest
 
 ## Local Development
 
+First, clone the repository and install dependencies:
+
+```bash
+git clone https://github.com/jenslys/opencode-gemini-auth.git
+cd opencode-gemini-auth
+bun install
+```
+
 When you want Opencode to use a local checkout of this plugin, point the
 `plugin` entry in your config to the folder via a `file://` URL:
 
