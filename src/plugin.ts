@@ -4,6 +4,7 @@ import type { GeminiTokenExchangeResult } from "./gemini/oauth";
 import { accessTokenExpired, isOAuthAuth } from "./plugin/auth";
 import { promptProjectId } from "./plugin/cli";
 import { ensureProjectContext } from "./plugin/project";
+import { startGeminiDebugRequest } from "./plugin/debug";
 import {
   isGenerativeLanguageRequest,
   prepareGeminiRequest,
@@ -73,8 +74,20 @@ export const GeminiCLIOAuthPlugin = async (
             projectContext.effectiveProjectId,
           );
 
+          const originalUrl = toUrlString(input);
+          const resolvedUrl = toUrlString(request);
+          const debugContext = startGeminiDebugRequest({
+            originalUrl,
+            resolvedUrl,
+            method: transformedInit.method,
+            headers: transformedInit.headers,
+            body: transformedInit.body,
+            streaming,
+            projectId: projectContext.effectiveProjectId,
+          });
+
           const response = await fetch(request, transformedInit);
-          return transformGeminiResponse(response, streaming);
+          return transformGeminiResponse(response, streaming, debugContext);
         },
       };
     },
@@ -189,3 +202,14 @@ export const GeminiCLIOAuthPlugin = async (
 });
 
 export const GoogleOAuthPlugin = GeminiCLIOAuthPlugin;
+
+function toUrlString(value: RequestInfo): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  const candidate = (value as Request).url;
+  if (candidate) {
+    return candidate;
+  }
+  return value.toString();
+}

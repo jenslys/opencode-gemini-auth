@@ -2,8 +2,12 @@ import {
   CODE_ASSIST_HEADERS,
   GEMINI_CODE_ASSIST_ENDPOINT,
 } from "../constants";
+import { logGeminiDebugResponse, type GeminiDebugContext } from "./debug";
 
 const STREAM_ACTION = "streamGenerateContent";
+const MODEL_FALLBACKS: Record<string, string> = {
+  "gemini-2.5-flash-image": "gemini-2.5-flash",
+};
 
 export function isGenerativeLanguageRequest(input: RequestInfo): input is string {
   return typeof input === "string" && input.includes("generativelanguage.googleapis.com");
@@ -60,23 +64,26 @@ export function prepareGeminiRequest(
     };
   }
 
-  const [, model, action] = match;
-  const streaming = action === STREAM_ACTION;
-  const transformedUrl = `${GEMINI_CODE_ASSIST_ENDPOINT}/v1internal:${action}${
+  const [, rawModel = "", rawAction = ""] = match;
+  const effectiveModel = MODEL_FALLBACKS[rawModel] ?? rawModel;
+  const streaming = rawAction === STREAM_ACTION;
+  const transformedUrl = `${GEMINI_CODE_ASSIST_ENDPOINT}/v1internal:${rawAction}${
     streaming ? "?alt=sse" : ""
   }`;
 
   let body = baseInit.body;
   if (typeof baseInit.body === "string" && baseInit.body) {
-    const trimmedPayload = baseInit.body.trim();
-    const looksCodeAssistPayload =
-      trimmedPayload.startsWith("{") &&
-      trimmedPayload.includes('"project"') &&
-      trimmedPayload.includes('"request"');
+    try {
+      const parsedBody = JSON.parse(baseInit.body) as Record<string, unknown>;
+      const isWrapped = typeof parsedBody.project === "string" && "request" in parsedBody;
 
-    if (!looksCodeAssistPayload) {
-      try {
-        const parsedBody = JSON.parse(baseInit.body) as Record<string, unknown>;
+      if (isWrapped) {
+        const wrappedBody = {
+          ...parsedBody,
+          model: effectiveModel,
+        } as Record<string, unknown>;
+        body = JSON.stringify(wrappedBody);
+      } else {
         const requestPayload: Record<string, unknown> = { ...parsedBody };
 
         if ("system_instruction" in requestPayload) {
@@ -90,14 +97,14 @@ export function prepareGeminiRequest(
 
         const wrappedBody = {
           project: projectId,
-          model,
+          model: effectiveModel,
           request: requestPayload,
         };
 
         body = JSON.stringify(wrappedBody);
-      } catch (error) {
-        console.error("Failed to transform Gemini request body:", error);
       }
+    } catch (error) {
+      console.error("Failed to transform Gemini request body:", error);
     }
   }
 
@@ -123,9 +130,13 @@ export function prepareGeminiRequest(
 export async function transformGeminiResponse(
   response: Response,
   streaming: boolean,
+  debugContext?: GeminiDebugContext | null,
 ): Promise<Response> {
   const contentType = response.headers.get("content-type") ?? "";
   if (!streaming && !contentType.includes("application/json")) {
+    logGeminiDebugResponse(debugContext, response, {
+      note: "Non-JSON response (body omitted)",
+    });
     return response;
   }
 
@@ -138,6 +149,11 @@ export async function transformGeminiResponse(
       headers,
     };
 
+    logGeminiDebugResponse(debugContext, response, {
+      body: text,
+      note: streaming ? "Streaming SSE payload" : undefined,
+    });
+
     if (streaming) {
       return new Response(transformStreamingPayload(text), init);
     }
@@ -149,6 +165,10 @@ export async function transformGeminiResponse(
 
     return new Response(text, init);
   } catch (error) {
+    logGeminiDebugResponse(debugContext, response, {
+      error,
+      note: "Failed to transform Gemini response",
+    });
     console.error("Failed to transform Gemini response:", error);
     return response;
   }
