@@ -5,7 +5,8 @@ existing Gemini plan and its included quota instead of API billing.
 
 ## Setup
 
-1. Add the plugin to your [Opencode config](https://opencode.ai/docs/config/):
+1. Ensure the Google Cloud project you plan to use has the **Gemini for Google Cloud API** (`cloudaicompanion.googleapis.com`) enabled and that your account has the `roles/cloudaicompanion.user` role. Follow https://docs.cloud.google.com/gemini/docs/discover/set-up-gemini if you need help.
+2. Add the plugin to your [Opencode config](https://opencode.ai/docs/config/):
 
    ```json
    {
@@ -14,8 +15,8 @@ existing Gemini plan and its included quota instead of API billing.
    }
    ```
 
-2. Run `opencode auth login`.
-3. Choose the Google provider and select **OAuth with Google (Gemini CLI)**.
+3. Run `opencode auth login`.
+4. Choose the Google provider and select **OAuth with Google (Gemini CLI)**.
 
 The plugin spins up a local callback listener, so after approving in the
 browser you'll land on an "Authentication complete" page with no URL
