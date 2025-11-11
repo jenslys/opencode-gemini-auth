@@ -13,6 +13,73 @@ import type {
 const projectContextResultCache = new Map<string, ProjectContextResult>();
 const projectContextPendingCache = new Map<string, Promise<ProjectContextResult>>();
 
+const CODE_ASSIST_METADATA = {
+  ideType: "IDE_UNSPECIFIED",
+  platform: "PLATFORM_UNSPECIFIED",
+  pluginType: "GEMINI",
+} as const;
+
+interface GeminiUserTier {
+  id?: string;
+  isDefault?: boolean;
+  userDefinedCloudaicompanionProject?: boolean;
+}
+
+interface LoadCodeAssistPayload {
+  cloudaicompanionProject?: string;
+  currentTier?: {
+    id?: string;
+  };
+  allowedTiers?: GeminiUserTier[];
+}
+
+interface OnboardUserPayload {
+  done?: boolean;
+  response?: {
+    cloudaicompanionProject?: {
+      id?: string;
+    };
+  };
+}
+
+class ProjectIdRequiredError extends Error {
+  constructor() {
+    super(
+      "Google Gemini requires a Google Cloud project. Enable the Gemini for Google Cloud API on a project you control, rerun `opencode auth login`, and supply that project ID when prompted.",
+    );
+  }
+}
+
+function buildMetadata(projectId?: string): Record<string, string> {
+  const metadata: Record<string, string> = {
+    ideType: CODE_ASSIST_METADATA.ideType,
+    platform: CODE_ASSIST_METADATA.platform,
+    pluginType: CODE_ASSIST_METADATA.pluginType,
+  };
+  if (projectId) {
+    metadata.duetProject = projectId;
+  }
+  return metadata;
+}
+
+function getDefaultTierId(allowedTiers?: GeminiUserTier[]): string | undefined {
+  if (!allowedTiers || allowedTiers.length === 0) {
+    return undefined;
+  }
+  for (const tier of allowedTiers) {
+    if (tier?.isDefault) {
+      return tier.id;
+    }
+  }
+  return allowedTiers[0]?.id;
+}
+
+function wait(ms: number): Promise<void> {
+  return new Promise(function (resolve) {
+    setTimeout(resolve, ms);
+  });
+}
+
 function getCacheKey(auth: OAuthAuthDetails): string | undefined {
   const refresh = auth.refresh?.trim();
   return refresh ? refresh : undefined;
@@ -28,11 +95,18 @@ export function invalidateProjectContextCache(refresh?: string): void {
   projectContextResultCache.delete(refresh);
 }
 
-export async function loadManagedProject(accessToken: string): Promise<{
-  managedProjectId?: string;
-  needsOnboarding: boolean;
-}> {
+export async function loadManagedProject(
+  accessToken: string,
+  projectId?: string,
+): Promise<LoadCodeAssistPayload | null> {
   try {
+    const metadata = buildMetadata(projectId);
+
+    const requestBody: Record<string, unknown> = { metadata };
+    if (projectId) {
+      requestBody.cloudaicompanionProject = projectId;
+    }
+
     const response = await fetch(
       `${GEMINI_CODE_ASSIST_ENDPOINT}/v1internal:loadCodeAssist`,
       {
@@ -42,134 +116,78 @@ export async function loadManagedProject(accessToken: string): Promise<{
           Authorization: `Bearer ${accessToken}`,
           ...CODE_ASSIST_HEADERS,
         },
-        body: JSON.stringify({
-          metadata: {
-            ideType: "IDE_UNSPECIFIED",
-            platform: "PLATFORM_UNSPECIFIED",
-            pluginType: "GEMINI",
-          },
-        }),
+        body: JSON.stringify(requestBody),
       },
     );
 
     if (!response.ok) {
-      return { needsOnboarding: false };
+      return null;
     }
 
-    const payload = (await response.json()) as {
-      cloudaicompanionProject?: string;
-      currentTier?: string;
-    };
-
-    if (payload.cloudaicompanionProject) {
-      return {
-        managedProjectId: payload.cloudaicompanionProject,
-        needsOnboarding: false,
-      };
-    }
-
-    return { needsOnboarding: !payload.currentTier };
+    return (await response.json()) as LoadCodeAssistPayload;
   } catch (error) {
     console.error("Failed to load Gemini managed project:", error);
-    return { needsOnboarding: false };
+    return null;
   }
 }
 
-export async function pollOperation(
-  accessToken: string,
-  operationName: string,
-  attempts = 10,
-  intervalMs = 2000,
-): Promise<string | undefined> {
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    await new Promise((resolve) => setTimeout(resolve, intervalMs));
 
+export async function onboardManagedProject(
+  accessToken: string,
+  tierId: string,
+  projectId?: string,
+  attempts = 10,
+  delayMs = 5000,
+): Promise<string | undefined> {
+  const metadata = buildMetadata(projectId);
+  const requestBody: Record<string, unknown> = {
+    tierId,
+    metadata,
+  };
+
+  if (tierId !== "FREE") {
+    if (!projectId) {
+      throw new ProjectIdRequiredError();
+    }
+    requestBody.cloudaicompanionProject = projectId;
+  }
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
     try {
       const response = await fetch(
-        `${GEMINI_CODE_ASSIST_ENDPOINT}/v1internal/operations/${operationName}`,
+        `${GEMINI_CODE_ASSIST_ENDPOINT}/v1internal:onboardUser`,
         {
-          method: "GET",
+          method: "POST",
           headers: {
+            "Content-Type": "application/json",
             Authorization: `Bearer ${accessToken}`,
+            ...CODE_ASSIST_HEADERS,
           },
+          body: JSON.stringify(requestBody),
         },
       );
 
       if (!response.ok) {
-        continue;
+        return undefined;
       }
 
-      const payload = (await response.json()) as {
-        done?: boolean;
-        response?: {
-          cloudaicompanionProject?: {
-            id?: string;
-          };
-        };
-      };
-
-      const projectId = payload.response?.cloudaicompanionProject?.id;
+      const payload = (await response.json()) as OnboardUserPayload;
+      const managedProjectId = payload.response?.cloudaicompanionProject?.id;
+      if (payload.done && managedProjectId) {
+        return managedProjectId;
+      }
       if (payload.done && projectId) {
         return projectId;
       }
     } catch (error) {
-      console.error("Failed to poll Gemini onboarding operation:", error);
-    }
-  }
-  return undefined;
-}
-
-export async function onboardManagedProject(
-  accessToken: string,
-): Promise<string | undefined> {
-  try {
-    const response = await fetch(
-      `${GEMINI_CODE_ASSIST_ENDPOINT}/v1internal:onboardUser`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${accessToken}`,
-          ...CODE_ASSIST_HEADERS,
-        },
-        body: JSON.stringify({
-          tierId: "FREE",
-          metadata: {
-            ideType: "IDE_UNSPECIFIED",
-            platform: "PLATFORM_UNSPECIFIED",
-            pluginType: "GEMINI",
-          },
-        }),
-      },
-    );
-
-    if (!response.ok) {
+      console.error("Failed to onboard Gemini managed project:", error);
       return undefined;
     }
 
-    const payload = (await response.json()) as {
-      done?: boolean;
-      name?: string;
-      response?: {
-        cloudaicompanionProject?: {
-          id?: string;
-        };
-      };
-    };
-
-    if (payload.done && payload.response?.cloudaicompanionProject?.id) {
-      return payload.response.cloudaicompanionProject.id;
-    }
-
-    if (!payload.done && payload.name) {
-      return pollOperation(accessToken, payload.name);
-    }
-
-    return undefined;
-  } catch (error) {
-    console.error("Failed to onboard Gemini managed project:", error);
-    return undefined;
+    await wait(delayMs);
   }
+
+  return undefined;
 }
 
 export async function ensureProjectContext(
@@ -202,13 +220,43 @@ export async function ensureProjectContext(
       };
     }
 
-    const loadResult = await loadManagedProject(accessToken);
-    let managedProjectId = loadResult.managedProjectId;
+    const loadPayload = await loadManagedProject(accessToken, parts.projectId);
+    if (loadPayload?.cloudaicompanionProject) {
+      const managedProjectId = loadPayload.cloudaicompanionProject;
+      const updatedAuth: OAuthAuthDetails = {
+        ...auth,
+        refresh: formatRefreshParts({
+          refreshToken: parts.refreshToken,
+          projectId: parts.projectId,
+          managedProjectId,
+        }),
+      };
 
-    if (!managedProjectId && loadResult.needsOnboarding) {
-      managedProjectId = await onboardManagedProject(accessToken);
+      await client.auth.set({
+        path: { id: GEMINI_PROVIDER_ID },
+        body: updatedAuth,
+      });
+
+      return { auth: updatedAuth, effectiveProjectId: managedProjectId };
     }
 
+    if (!loadPayload) {
+      throw new ProjectIdRequiredError();
+    }
+
+    const currentTierId = loadPayload.currentTier?.id ?? undefined;
+    if (currentTierId && currentTierId !== "FREE") {
+      throw new ProjectIdRequiredError();
+    }
+
+    const defaultTierId = getDefaultTierId(loadPayload.allowedTiers);
+    const tierId = defaultTierId ?? "FREE";
+
+    if (tierId !== "FREE") {
+      throw new ProjectIdRequiredError();
+    }
+
+    const managedProjectId = await onboardManagedProject(accessToken, tierId, parts.projectId);
     if (managedProjectId) {
       const updatedAuth: OAuthAuthDetails = {
         ...auth,
@@ -227,7 +275,7 @@ export async function ensureProjectContext(
       return { auth: updatedAuth, effectiveProjectId: managedProjectId };
     }
 
-    return { auth, effectiveProjectId: "" };
+    throw new ProjectIdRequiredError();
   };
 
   if (!cacheKey) {

@@ -17,6 +17,7 @@ import type {
   LoaderResult,
   PluginContext,
   PluginResult,
+  ProjectContextResult,
   Provider,
 } from "./plugin/types";
 
@@ -65,7 +66,18 @@ export const GeminiCLIOAuthPlugin = async (
             return fetch(input, init);
           }
 
-          const projectContext = await ensureProjectContext(authRecord, client);
+          async function resolveProjectContext(): Promise<ProjectContextResult> {
+            try {
+              return await ensureProjectContext(authRecord, client);
+            } catch (error) {
+              if (error instanceof Error) {
+                console.error(error.message);
+              }
+              throw error;
+            }
+          }
+
+          const projectContext = await resolveProjectContext();
 
           const { request, init: transformedInit, streaming } = prepareGeminiRequest(
             input,
