@@ -109,7 +109,7 @@ jobs:
           } >"$BODY_FILE"
           cat "$BODY_FILE"
           {
-            echo "body<<'EOF'"
+            echo "body<<EOF"
             cat "$BODY_FILE"
             echo "EOF"
           } >>"$GITHUB_OUTPUT"
