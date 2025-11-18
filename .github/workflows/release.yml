@@ -100,13 +100,12 @@ jobs:
             echo ""
             echo "To get the latest version:"
             echo ""
-            cat <<'UPDATE_NOTE'
-```bash
-(cd ~ && sed -i.bak '/"opencode-gemini-auth"/d' .cache/opencode/package.json && \
-rm -rf .cache/opencode/node_modules/opencode-gemini-auth && \
-echo "Plugin update script finished successfully.")
-```
-UPDATE_NOTE
+            printf '%s\n' '```bash'
+            printf '%s\n' '(cd ~ && sed -i.bak '\''/"opencode-gemini-auth"/d'\'' .cache/opencode/package.json && \'
+            printf '%s\n' 'rm -rf .cache/opencode/node_modules/opencode-gemini-auth && \'
+            printf '%s\n' 'echo "Plugin update script finished successfully.")'
+            printf '%s\n' '```'
+
           } >"$BODY_FILE"
           cat "$BODY_FILE"
           {
@@ -123,7 +122,8 @@ UPDATE_NOTE
         with:
           tag_name: v${{ steps.determine.outputs.current_version }}
           release_name: v${{ steps.determine.outputs.current_version }}
-          generate_release_notes: true
+          body: ${{ steps.release_notes.outputs.body }}
+          generate_release_notes: false
 
       - name: Publish to npm
         if: steps.determine.outputs.changed == 'true' && steps.determine.outputs.tag_exists == 'false'
