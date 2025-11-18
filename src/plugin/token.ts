@@ -139,14 +139,13 @@ export async function refreshAccessToken(
     storeCachedAuth(updatedAuth);
     invalidateProjectContextCache(auth.refresh);
 
-    const refreshTokenRotated =
-      typeof payload.refresh_token === "string" && payload.refresh_token !== parts.refreshToken;
-
-    if (refreshTokenRotated) {
+    try {
       await client.auth.set({
         path: { id: GEMINI_PROVIDER_ID },
         body: updatedAuth,
       });
+    } catch (storeError) {
+      console.error("Failed to persist refreshed Gemini OAuth credentials:", storeError);
     }
 
     return updatedAuth;
