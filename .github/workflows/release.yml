@@ -74,9 +74,13 @@ jobs:
           PREVIOUS_VERSION="${{ steps.determine.outputs.previous_version }}"
           RANGE=""
           COMPARE_URL=""
-          if [ -n "$PREVIOUS_VERSION" ] && git rev-parse "refs/tags/v${PREVIOUS_VERSION}" >/dev/null 2>&1; then
-            RANGE="v${PREVIOUS_VERSION}..HEAD"
-            COMPARE_URL="https://github.com/${GITHUB_REPOSITORY}/compare/v${PREVIOUS_VERSION}...v${CURRENT_VERSION}"
+          LAST_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || true)
+          if [ -z "$LAST_TAG" ] && [ -n "$PREVIOUS_VERSION" ] && git rev-parse "refs/tags/v${PREVIOUS_VERSION}" >/dev/null 2>&1; then
+            LAST_TAG="v${PREVIOUS_VERSION}"
+          fi
+          if [ -n "$LAST_TAG" ]; then
+            RANGE="${LAST_TAG}..HEAD"
+            COMPARE_URL="https://github.com/${GITHUB_REPOSITORY}/compare/${LAST_TAG}...v${CURRENT_VERSION}"
           fi
           if [ -n "$RANGE" ]; then
             CHANGELOG=$(git log --pretty=format:'- %s (%h)' "$RANGE")
