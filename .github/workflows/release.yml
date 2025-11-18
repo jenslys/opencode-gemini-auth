@@ -65,6 +65,56 @@ jobs:
         if: steps.determine.outputs.changed == 'true' && steps.determine.outputs.tag_exists == 'false'
         run: npm install
 
+      - name: Generate release notes
+        if: steps.determine.outputs.changed == 'true' && steps.determine.outputs.tag_exists == 'false'
+        id: release_notes
+        run: |
+          set -euo pipefail
+          CURRENT_VERSION="${{ steps.determine.outputs.current_version }}"
+          PREVIOUS_VERSION="${{ steps.determine.outputs.previous_version }}"
+          RANGE=""
+          COMPARE_URL=""
+          if [ -n "$PREVIOUS_VERSION" ] && git rev-parse "refs/tags/v${PREVIOUS_VERSION}" >/dev/null 2>&1; then
+            RANGE="v${PREVIOUS_VERSION}..HEAD"
+            COMPARE_URL="https://github.com/${GITHUB_REPOSITORY}/compare/v${PREVIOUS_VERSION}...v${CURRENT_VERSION}"
+          fi
+          if [ -n "$RANGE" ]; then
+            CHANGELOG=$(git log --pretty=format:'- %s (%h)' "$RANGE")
+          else
+            CHANGELOG=$(git log --pretty=format:'- %s (%h)')
+          fi
+          if [ -z "$CHANGELOG" ]; then
+            CHANGELOG="- No commits found for this release."
+          fi
+          BODY_FILE=$(mktemp)
+          {
+            echo "## Release v${CURRENT_VERSION}"
+            echo ""
+            if [ -n "$COMPARE_URL" ]; then
+              echo "Compare changes: $COMPARE_URL"
+              echo ""
+            fi
+            printf "%s\n" "$CHANGELOG"
+            echo ""
+            echo "### Update Instructions"
+            echo ""
+            echo "To get the latest version:"
+            echo ""
+            cat <<'UPDATE_NOTE'
+```bash
+(cd ~ && sed -i.bak '/"opencode-gemini-auth"/d' .cache/opencode/package.json && \
+rm -rf .cache/opencode/node_modules/opencode-gemini-auth && \
+echo "Plugin update script finished successfully.")
+```
+UPDATE_NOTE
+          } >"$BODY_FILE"
+          cat "$BODY_FILE"
+          {
+            echo "body<<'EOF'"
+            cat "$BODY_FILE"
+            echo "EOF"
+          } >>"$GITHUB_OUTPUT"
+
       - name: Create GitHub release
         if: steps.determine.outputs.changed == 'true' && steps.determine.outputs.tag_exists == 'false'
         uses: actions/create-release@v1

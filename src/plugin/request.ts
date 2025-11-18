@@ -8,6 +8,20 @@ const STREAM_ACTION = "streamGenerateContent";
 const MODEL_FALLBACKS: Record<string, string> = {
   "gemini-2.5-flash-image": "gemini-2.5-flash",
 };
+const GEMINI_PREVIEW_LINK = "https://goo.gle/enable-preview-features";
+
+interface GeminiApiError {
+  code?: number;
+  message?: string;
+  status?: string;
+  [key: string]: unknown;
+}
+
+interface GeminiApiBody {
+  response?: unknown;
+  error?: GeminiApiError;
+  [key: string]: unknown;
+}
 
 export function isGenerativeLanguageRequest(input: RequestInfo): input is string {
   return typeof input === "string" && input.includes("generativelanguage.googleapis.com");
@@ -40,7 +54,7 @@ export function prepareGeminiRequest(
   init: RequestInit | undefined,
   accessToken: string,
   projectId: string,
-): { request: RequestInfo; init: RequestInit; streaming: boolean } {
+): { request: RequestInfo; init: RequestInit; streaming: boolean; requestedModel?: string } {
   const baseInit: RequestInit = { ...init };
   const headers = new Headers(init?.headers ?? {});
 
@@ -124,6 +138,7 @@ export function prepareGeminiRequest(
       body,
     },
     streaming,
+    requestedModel: rawModel,
   };
 }
 
@@ -131,9 +146,13 @@ export async function transformGeminiResponse(
   response: Response,
   streaming: boolean,
   debugContext?: GeminiDebugContext | null,
+  requestedModel?: string,
 ): Promise<Response> {
   const contentType = response.headers.get("content-type") ?? "";
-  if (!streaming && !contentType.includes("application/json")) {
+  const isJsonResponse = contentType.includes("application/json");
+  const isEventStreamResponse = contentType.includes("text/event-stream");
+
+  if (!isJsonResponse && !isEventStreamResponse) {
     logGeminiDebugResponse(debugContext, response, {
       note: "Non-JSON response (body omitted)",
     });
@@ -154,13 +173,24 @@ export async function transformGeminiResponse(
       note: streaming ? "Streaming SSE payload" : undefined,
     });
 
-    if (streaming) {
+    if (streaming && response.ok && isEventStreamResponse) {
       return new Response(transformStreamingPayload(text), init);
     }
 
-    const parsed = JSON.parse(text) as { response?: unknown };
-    if (parsed.response !== undefined) {
-      return new Response(JSON.stringify(parsed.response), init);
+    const parsed = parseGeminiApiBody(text);
+    if (!parsed) {
+      return new Response(text, init);
+    }
+
+    const patched = rewriteGeminiPreviewAccessError(parsed, response.status, requestedModel);
+    const effectiveBody = patched ?? parsed;
+
+    if (effectiveBody.response !== undefined) {
+      return new Response(JSON.stringify(effectiveBody.response), init);
+    }
+
+    if (patched) {
+      return new Response(JSON.stringify(effectiveBody), init);
     }
 
     return new Response(text, init);
@@ -171,5 +201,78 @@ export async function transformGeminiResponse(
     });
     console.error("Failed to transform Gemini response:", error);
     return response;
+  }
+}
+
+function rewriteGeminiPreviewAccessError(
+  body: GeminiApiBody,
+  status: number,
+  requestedModel?: string,
+): GeminiApiBody | null {
+  if (!needsPreviewAccessOverride(status, body, requestedModel)) {
+    return null;
+  }
+
+  const error: GeminiApiError = body.error ?? {};
+  const trimmedMessage = typeof error.message === "string" ? error.message.trim() : "";
+  const messagePrefix = trimmedMessage.length > 0
+    ? trimmedMessage
+    : "Gemini 3 preview features are not enabled for this account.";
+  const enhancedMessage = `${messagePrefix} Request preview access at ${GEMINI_PREVIEW_LINK} before using Gemini 3 models.`;
+
+  return {
+    ...body,
+    error: {
+      ...error,
+      message: enhancedMessage,
+    },
+  };
+}
+
+function needsPreviewAccessOverride(
+  status: number,
+  body: GeminiApiBody,
+  requestedModel?: string,
+): boolean {
+  if (status !== 404) {
+    return false;
+  }
+
+  if (isGeminiThreeModel(requestedModel)) {
+    return true;
+  }
+
+  const errorMessage = typeof body.error?.message === "string" ? body.error.message : "";
+  return isGeminiThreeModel(errorMessage);
+}
+
+function isGeminiThreeModel(target?: string): boolean {
+  if (!target) {
+    return false;
+  }
+
+  return /gemini[\s-]?3/i.test(target);
+}
+
+function parseGeminiApiBody(rawText: string): GeminiApiBody | null {
+  try {
+    const parsed = JSON.parse(rawText);
+    if (Array.isArray(parsed)) {
+      const firstObject = parsed.find(function (item: unknown) {
+        return typeof item === "object" && item !== null;
+      });
+      if (firstObject && typeof firstObject === "object") {
+        return firstObject as GeminiApiBody;
+      }
+      return null;
+    }
+
+    if (parsed && typeof parsed === "object") {
+      return parsed as GeminiApiBody;
+    }
+
+    return null;
+  } catch {
+    return null;
   }
 }

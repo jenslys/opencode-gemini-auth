@@ -79,7 +79,12 @@ export const GeminiCLIOAuthPlugin = async (
 
           const projectContext = await resolveProjectContext();
 
-          const { request, init: transformedInit, streaming } = prepareGeminiRequest(
+          const {
+            request,
+            init: transformedInit,
+            streaming,
+            requestedModel,
+          } = prepareGeminiRequest(
             input,
             init,
             accessToken,
@@ -99,7 +104,7 @@ export const GeminiCLIOAuthPlugin = async (
           });
 
           const response = await fetch(request, transformedInit);
-          return transformGeminiResponse(response, streaming, debugContext);
+          return transformGeminiResponse(response, streaming, debugContext, requestedModel);
         },
       };
     },
