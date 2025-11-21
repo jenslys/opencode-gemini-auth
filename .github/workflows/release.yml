@@ -83,9 +83,9 @@ jobs:
             COMPARE_URL="https://github.com/${GITHUB_REPOSITORY}/compare/${LAST_TAG}...v${CURRENT_VERSION}"
           fi
           if [ -n "$RANGE" ]; then
-            CHANGELOG=$(git log --pretty=format:'- %s (%h)' "$RANGE")
+            CHANGELOG=$(git log --no-merges --pretty=format:'- %s (%h)' "$RANGE")
           else
-            CHANGELOG=$(git log --pretty=format:'- %s (%h)')
+            CHANGELOG=$(git log --no-merges --pretty=format:'- %s (%h)')
           fi
           if [ -z "$CHANGELOG" ]; then
             CHANGELOG="- No commits found for this release."
