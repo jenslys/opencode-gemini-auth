@@ -162,6 +162,38 @@ export async function transformGeminiResponse(
   try {
     const text = await response.text();
     const headers = new Headers(response.headers);
+    
+    // Extract retry timing from Google's structured error response
+    // Google returns retry timing in error.details[].retryDelay: "55.846891726s"
+    if (!response.ok && text) {
+      try {
+        const errorBody = JSON.parse(text);
+        if (errorBody?.error?.details && Array.isArray(errorBody.error.details)) {
+          // Look for RetryInfo type
+          const retryInfo = errorBody.error.details.find(
+            (detail: any) => detail['@type'] === 'type.googleapis.com/google.rpc.RetryInfo'
+          );
+          
+          if (retryInfo?.retryDelay) {
+            // Parse "55.846891726s" format
+            const match = retryInfo.retryDelay.match(/^([\d.]+)s$/);
+            if (match && match[1]) {
+              const retrySeconds = parseFloat(match[1]);
+              if (!isNaN(retrySeconds) && retrySeconds > 0) {
+                // Add both formats for compatibility
+                const retryAfterSec = Math.ceil(retrySeconds).toString();
+                const retryAfterMs = Math.ceil(retrySeconds * 1000).toString();
+                headers.set('Retry-After', retryAfterSec);
+                headers.set('retry-after-ms', retryAfterMs);
+              }
+            }
+          }
+        }
+      } catch (parseError) {
+        // If JSON parsing fails, continue without retry headers
+      }
+    }
+    
     const init = {
       status: response.status,
       statusText: response.statusText,
