@@ -115,29 +115,47 @@ export const GeminiCLIOAuthPlugin = async (
         authorize: async () => {
           console.log("\n=== Google Gemini OAuth Setup ===");
 
+          // Detect headless/SSH environment
+          const isHeadless = !!(
+            process.env.SSH_CONNECTION ||
+            process.env.SSH_CLIENT ||
+            process.env.SSH_TTY ||
+            process.env.OPENCODE_HEADLESS
+          );
+
           let listener: OAuthListener | null = null;
-          try {
-            listener = await startOAuthListener();
-            const { host } = new URL(GEMINI_REDIRECT_URI);
-            console.log("1. You'll be asked to sign in to your Google account and grant permission.");
-            console.log(
-              `2. We'll automatically capture the browser redirect on http://${host}. No need to paste anything back here.`,
-            );
-            console.log("3. Once you see the 'Authentication complete' page in your browser, return to this terminal.");
-          } catch (error) {
-            console.log("1. You'll be asked to sign in to your Google account and grant permission.");
-            console.log("2. After you approve, the browser will try to redirect to a 'localhost' page.");
-            console.log(
-              "3. This page will show an error like 'This site can’t be reached'. This is perfectly normal and means it worked!",
-            );
-            console.log(
-              "4. Once you see that error, copy the entire URL from the address bar, paste it back here, and press Enter.",
-            );
-            if (error instanceof Error) {
-              console.log(`\nWarning: Couldn't start the local callback listener (${error.message}). Falling back to manual copy/paste.`);
-            } else {
-              console.log("\nWarning: Couldn't start the local callback listener. Falling back to manual copy/paste.");
+          if (!isHeadless) {
+            try {
+              listener = await startOAuthListener();
+              const { host } = new URL(GEMINI_REDIRECT_URI);
+              console.log("1. You'll be asked to sign in to your Google account and grant permission.");
+              console.log(
+                `2. We'll automatically capture the browser redirect on http://${host}. No need to paste anything back here.`,
+              );
+              console.log("3. Once you see the 'Authentication complete' page in your browser, return to this terminal.");
+            } catch (error) {
+              console.log("1. You'll be asked to sign in to your Google account and grant permission.");
+              console.log("2. After you approve, the browser will try to redirect to a 'localhost' page.");
+              console.log(
+                "3. This page will show an error like 'This site can't be reached'. This is perfectly normal and means it worked!",
+              );
+              console.log(
+                "4. Once you see that error, copy the entire URL from the address bar, paste it back here, and press Enter.",
+              );
+              if (error instanceof Error) {
+                console.log(`\nWarning: Couldn't start the local callback listener (${error.message}). Falling back to manual copy/paste.`);
+              } else {
+                console.log("\nWarning: Couldn't start the local callback listener. Falling back to manual copy/paste.");
+              }
             }
+          } else {
+            console.log("Headless environment detected. Using manual OAuth flow.");
+            console.log("1. You'll be asked to sign in to your Google account and grant permission.");
+            console.log("2. After you approve, the browser will redirect to a 'localhost' URL.");
+            console.log(
+              "3. Copy the ENTIRE URL from your browser's address bar (it will look like: http://localhost:8085/oauth2callback?code=...&state=...)",
+            );
+            console.log("4. Paste the URL back here and press Enter.");
           }
           console.log("\n");
 
