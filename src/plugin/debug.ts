@@ -28,10 +28,14 @@ interface GeminiDebugResponseMeta {
   body?: string;
   note?: string;
   error?: unknown;
+  headersOverride?: HeadersInit;
 }
 
 let requestCounter = 0;
 
+/**
+ * Begins a debug trace for a Gemini request, logging request metadata when debugging is enabled.
+ */
 export function startGeminiDebugRequest(meta: GeminiDebugRequestMeta): GeminiDebugContext | null {
   if (!debugEnabled) {
     return null;
@@ -56,6 +60,9 @@ export function startGeminiDebugRequest(meta: GeminiDebugRequestMeta): GeminiDeb
   return { id, streaming: meta.streaming, startedAt: Date.now() };
 }
 
+/**
+ * Logs response details for a previously started debug trace when debugging is enabled.
+ */
 export function logGeminiDebugResponse(
   context: GeminiDebugContext | null | undefined,
   response: Response,
@@ -70,7 +77,9 @@ export function logGeminiDebugResponse(
     `[Gemini Debug ${context.id}] Response ${response.status} ${response.statusText} (${durationMs}ms)`,
   );
   logDebug(
-    `[Gemini Debug ${context.id}] Response Headers: ${JSON.stringify(maskHeaders(response.headers))}`,
+    `[Gemini Debug ${context.id}] Response Headers: ${JSON.stringify(
+      maskHeaders(meta.headersOverride ?? response.headers),
+    )}`,
   );
 
   if (meta.note) {
@@ -88,6 +97,9 @@ export function logGeminiDebugResponse(
   }
 }
 
+/**
+ * Obscures sensitive headers and returns a plain object for logging.
+ */
 function maskHeaders(headers?: HeadersInit | Headers): Record<string, string> {
   if (!headers) {
     return {};
@@ -105,6 +117,9 @@ function maskHeaders(headers?: HeadersInit | Headers): Record<string, string> {
   return result;
 }
 
+/**
+ * Produces a short, type-aware preview of a request/response body for logs.
+ */
 function formatBodyPreview(body?: BodyInit | null): string | undefined {
   if (body == null) {
     return undefined;
@@ -129,6 +144,9 @@ function formatBodyPreview(body?: BodyInit | null): string | undefined {
   return `[${body.constructor?.name ?? typeof body} payload omitted]`;
 }
 
+/**
+ * Truncates long strings to a fixed preview length for logging.
+ */
 function truncateForLog(text: string): string {
   if (text.length <= MAX_BODY_PREVIEW_CHARS) {
     return text;
@@ -136,10 +154,16 @@ function truncateForLog(text: string): string {
   return `${text.slice(0, MAX_BODY_PREVIEW_CHARS)}... (truncated ${text.length - MAX_BODY_PREVIEW_CHARS} chars)`;
 }
 
+/**
+ * Writes a single debug line using the configured writer.
+ */
 function logDebug(line: string): void {
   logWriter(line);
 }
 
+/**
+ * Converts unknown error-like values into printable strings.
+ */
 function formatError(error: unknown): string {
   if (error instanceof Error) {
     return error.stack ?? error.message;
@@ -151,11 +175,17 @@ function formatError(error: unknown): string {
   }
 }
 
+/**
+ * Builds a timestamped log file path in the current working directory.
+ */
 function defaultLogFilePath(): string {
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
   return join(cwd(), `gemini-debug-${timestamp}.log`);
 }
 
+/**
+ * Creates a line writer that appends to a file when provided.
+ */
 function createLogWriter(filePath?: string): (line: string) => void {
   if (!filePath) {
     return () => {};

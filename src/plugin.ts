@@ -21,6 +21,10 @@ import type {
   Provider,
 } from "./plugin/types";
 
+/**
+ * Registers the Gemini OAuth provider for Opencode, handling auth, request rewriting,
+ * debug logging, and response normalization for Gemini Code Assist endpoints.
+ */
 export const GeminiCLIOAuthPlugin = async (
   { client }: PluginContext,
 ): Promise<PluginResult> => ({
@@ -66,6 +70,9 @@ export const GeminiCLIOAuthPlugin = async (
             return fetch(input, init);
           }
 
+          /**
+           * Ensures we have a usable project context for the current auth snapshot.
+           */
           async function resolveProjectContext(): Promise<ProjectContextResult> {
             try {
               return await ensureProjectContext(authRecord, client);
@@ -115,7 +122,6 @@ export const GeminiCLIOAuthPlugin = async (
         authorize: async () => {
           console.log("\n=== Google Gemini OAuth Setup ===");
 
-          // Detect headless/SSH environment
           const isHeadless = !!(
             process.env.SSH_CONNECTION ||
             process.env.SSH_CLIENT ||
@@ -191,7 +197,6 @@ export const GeminiCLIOAuthPlugin = async (
                   try {
                     await listener?.close();
                   } catch {
-                    // Ignore close errors.
                   }
                 }
               },

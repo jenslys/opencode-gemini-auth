@@ -1,32 +1,31 @@
-import {
-  CODE_ASSIST_HEADERS,
-  GEMINI_CODE_ASSIST_ENDPOINT,
-} from "../constants";
+import { CODE_ASSIST_HEADERS, GEMINI_CODE_ASSIST_ENDPOINT } from "../constants";
 import { logGeminiDebugResponse, type GeminiDebugContext } from "./debug";
+import {
+  extractUsageFromSsePayload,
+  extractUsageMetadata,
+  normalizeThinkingConfig,
+  parseGeminiApiBody,
+  rewriteGeminiPreviewAccessError,
+  type GeminiApiBody,
+  type GeminiUsageMetadata,
+} from "./request-helpers";
 
 const STREAM_ACTION = "streamGenerateContent";
 const MODEL_FALLBACKS: Record<string, string> = {
   "gemini-2.5-flash-image": "gemini-2.5-flash",
 };
-const GEMINI_PREVIEW_LINK = "https://goo.gle/enable-preview-features";
-
-interface GeminiApiError {
-  code?: number;
-  message?: string;
-  status?: string;
-  [key: string]: unknown;
-}
-
-interface GeminiApiBody {
-  response?: unknown;
-  error?: GeminiApiError;
-  [key: string]: unknown;
-}
-
+/**
+ * Detects Gemini/Generative Language API requests by URL.
+ * @param input Request target passed to fetch.
+ * @returns True when the URL targets generativelanguage.googleapis.com.
+ */
 export function isGenerativeLanguageRequest(input: RequestInfo): input is string {
   return typeof input === "string" && input.includes("generativelanguage.googleapis.com");
 }
 
+/**
+ * Rewrites SSE payloads so downstream consumers see only the inner `response` objects.
+ */
 function transformStreamingPayload(payload: string): string {
   return payload
     .split("\n")
@@ -49,6 +48,10 @@ function transformStreamingPayload(payload: string): string {
     .join("\n");
 }
 
+/**
+ * Rewrites OpenAI-style requests into Gemini Code Assist shape, normalizing model, headers,
+ * optional cached_content, and thinking config. Also toggles streaming mode for SSE actions.
+ */
 export function prepareGeminiRequest(
   input: RequestInfo,
   init: RequestInit | undefined,
@@ -100,9 +103,46 @@ export function prepareGeminiRequest(
       } else {
         const requestPayload: Record<string, unknown> = { ...parsedBody };
 
+        const rawGenerationConfig = requestPayload.generationConfig as Record<string, unknown> | undefined;
+        const normalizedThinking = normalizeThinkingConfig(rawGenerationConfig?.thinkingConfig);
+        if (normalizedThinking) {
+          if (rawGenerationConfig) {
+            rawGenerationConfig.thinkingConfig = normalizedThinking;
+            requestPayload.generationConfig = rawGenerationConfig;
+          } else {
+            requestPayload.generationConfig = { thinkingConfig: normalizedThinking };
+          }
+        } else if (rawGenerationConfig?.thinkingConfig) {
+          delete rawGenerationConfig.thinkingConfig;
+          requestPayload.generationConfig = rawGenerationConfig;
+        }
+
         if ("system_instruction" in requestPayload) {
           requestPayload.systemInstruction = requestPayload.system_instruction;
           delete requestPayload.system_instruction;
+        }
+
+        const cachedContentFromExtra =
+          typeof requestPayload.extra_body === "object" && requestPayload.extra_body
+            ? (requestPayload.extra_body as Record<string, unknown>).cached_content ??
+              (requestPayload.extra_body as Record<string, unknown>).cachedContent
+            : undefined;
+        const cachedContent =
+          (requestPayload.cached_content as string | undefined) ??
+          (requestPayload.cachedContent as string | undefined) ??
+          (cachedContentFromExtra as string | undefined);
+        if (cachedContent) {
+          requestPayload.cachedContent = cachedContent;
+        }
+
+        delete requestPayload.cached_content;
+        delete requestPayload.cachedContent;
+        if (requestPayload.extra_body && typeof requestPayload.extra_body === "object") {
+          delete (requestPayload.extra_body as Record<string, unknown>).cached_content;
+          delete (requestPayload.extra_body as Record<string, unknown>).cachedContent;
+          if (Object.keys(requestPayload.extra_body as Record<string, unknown>).length === 0) {
+            delete requestPayload.extra_body;
+          }
         }
 
         if ("model" in requestPayload) {
@@ -142,6 +182,10 @@ export function prepareGeminiRequest(
   };
 }
 
+/**
+ * Normalizes Gemini responses: applies retry headers, extracts cache usage into headers,
+ * rewrites preview errors, flattens streaming payloads, and logs debug metadata.
+ */
 export async function transformGeminiResponse(
   response: Response,
   streaming: boolean,
@@ -163,24 +207,19 @@ export async function transformGeminiResponse(
     const text = await response.text();
     const headers = new Headers(response.headers);
     
-    // Extract retry timing from Google's structured error response
-    // Google returns retry timing in error.details[].retryDelay: "55.846891726s"
     if (!response.ok && text) {
       try {
         const errorBody = JSON.parse(text);
         if (errorBody?.error?.details && Array.isArray(errorBody.error.details)) {
-          // Look for RetryInfo type
           const retryInfo = errorBody.error.details.find(
             (detail: any) => detail['@type'] === 'type.googleapis.com/google.rpc.RetryInfo'
           );
           
           if (retryInfo?.retryDelay) {
-            // Parse "55.846891726s" format
             const match = retryInfo.retryDelay.match(/^([\d.]+)s$/);
             if (match && match[1]) {
               const retrySeconds = parseFloat(match[1]);
               if (!isNaN(retrySeconds) && retrySeconds > 0) {
-                // Add both formats for compatibility
                 const retryAfterSec = Math.ceil(retrySeconds).toString();
                 const retryAfterMs = Math.ceil(retrySeconds * 1000).toString();
                 headers.set('Retry-After', retryAfterSec);
@@ -190,7 +229,6 @@ export async function transformGeminiResponse(
           }
         }
       } catch (parseError) {
-        // If JSON parsing fails, continue without retry headers
       }
     }
     
@@ -200,29 +238,45 @@ export async function transformGeminiResponse(
       headers,
     };
 
+    const usageFromSse = streaming && isEventStreamResponse ? extractUsageFromSsePayload(text) : null;
+    const parsed: GeminiApiBody | null = !streaming || !isEventStreamResponse ? parseGeminiApiBody(text) : null;
+    const patched = parsed ? rewriteGeminiPreviewAccessError(parsed, response.status, requestedModel) : null;
+    const effectiveBody = patched ?? parsed ?? undefined;
+
+    const usage = usageFromSse ?? (effectiveBody ? extractUsageMetadata(effectiveBody) : null);
+    if (usage?.cachedContentTokenCount !== undefined) {
+      headers.set("x-gemini-cached-content-token-count", String(usage.cachedContentTokenCount));
+      if (usage.totalTokenCount !== undefined) {
+        headers.set("x-gemini-total-token-count", String(usage.totalTokenCount));
+      }
+      if (usage.promptTokenCount !== undefined) {
+        headers.set("x-gemini-prompt-token-count", String(usage.promptTokenCount));
+      }
+      if (usage.candidatesTokenCount !== undefined) {
+        headers.set("x-gemini-candidates-token-count", String(usage.candidatesTokenCount));
+      }
+    }
+
     logGeminiDebugResponse(debugContext, response, {
       body: text,
       note: streaming ? "Streaming SSE payload" : undefined,
+      headersOverride: headers,
     });
 
     if (streaming && response.ok && isEventStreamResponse) {
       return new Response(transformStreamingPayload(text), init);
     }
 
-    const parsed = parseGeminiApiBody(text);
     if (!parsed) {
       return new Response(text, init);
     }
 
-    const patched = rewriteGeminiPreviewAccessError(parsed, response.status, requestedModel);
-    const effectiveBody = patched ?? parsed;
-
-    if (effectiveBody.response !== undefined) {
+    if (effectiveBody?.response !== undefined) {
       return new Response(JSON.stringify(effectiveBody.response), init);
     }
 
     if (patched) {
-      return new Response(JSON.stringify(effectiveBody), init);
+      return new Response(JSON.stringify(patched), init);
     }
 
     return new Response(text, init);
@@ -233,78 +287,5 @@ export async function transformGeminiResponse(
     });
     console.error("Failed to transform Gemini response:", error);
     return response;
-  }
-}
-
-function rewriteGeminiPreviewAccessError(
-  body: GeminiApiBody,
-  status: number,
-  requestedModel?: string,
-): GeminiApiBody | null {
-  if (!needsPreviewAccessOverride(status, body, requestedModel)) {
-    return null;
-  }
-
-  const error: GeminiApiError = body.error ?? {};
-  const trimmedMessage = typeof error.message === "string" ? error.message.trim() : "";
-  const messagePrefix = trimmedMessage.length > 0
-    ? trimmedMessage
-    : "Gemini 3 preview features are not enabled for this account.";
-  const enhancedMessage = `${messagePrefix} Request preview access at ${GEMINI_PREVIEW_LINK} before using Gemini 3 models.`;
-
-  return {
-    ...body,
-    error: {
-      ...error,
-      message: enhancedMessage,
-    },
-  };
-}
-
-function needsPreviewAccessOverride(
-  status: number,
-  body: GeminiApiBody,
-  requestedModel?: string,
-): boolean {
-  if (status !== 404) {
-    return false;
-  }
-
-  if (isGeminiThreeModel(requestedModel)) {
-    return true;
-  }
-
-  const errorMessage = typeof body.error?.message === "string" ? body.error.message : "";
-  return isGeminiThreeModel(errorMessage);
-}
-
-function isGeminiThreeModel(target?: string): boolean {
-  if (!target) {
-    return false;
-  }
-
-  return /gemini[\s-]?3/i.test(target);
-}
-
-function parseGeminiApiBody(rawText: string): GeminiApiBody | null {
-  try {
-    const parsed = JSON.parse(rawText);
-    if (Array.isArray(parsed)) {
-      const firstObject = parsed.find(function (item: unknown) {
-        return typeof item === "object" && item !== null;
-      });
-      if (firstObject && typeof firstObject === "object") {
-        return firstObject as GeminiApiBody;
-      }
-      return null;
-    }
-
-    if (parsed && typeof parsed === "object") {
-      return parsed as GeminiApiBody;
-    }
-
-    return null;
-  } catch {
-    return null;
   }
 }

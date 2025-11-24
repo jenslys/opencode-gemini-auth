@@ -19,6 +19,9 @@ interface OAuthErrorPayload {
   error_description?: string;
 }
 
+/**
+ * Parses OAuth error payloads returned by Google token endpoints, tolerating varied shapes.
+ */
 function parseOAuthErrorPayload(text: string | undefined): { code?: string; description?: string } {
   if (!text) {
     return {};
@@ -55,6 +58,9 @@ function parseOAuthErrorPayload(text: string | undefined): { code?: string; desc
   }
 }
 
+/**
+ * Refreshes a Gemini OAuth access token, updates persisted credentials, and handles revocation.
+ */
 export async function refreshAccessToken(
   auth: OAuthAuthDetails,
   client: PluginClient,
@@ -83,7 +89,7 @@ export async function refreshAccessToken(
       try {
         errorText = await response.text();
       } catch {
-        // Ignore body parsing failures; we'll fall back to status only.
+        errorText = undefined;
       }
 
       const { code, description } = parseOAuthErrorPayload(errorText);

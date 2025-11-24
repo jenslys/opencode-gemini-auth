@@ -24,8 +24,8 @@ const redirectUri = new URL(GEMINI_REDIRECT_URI);
 const callbackPath = redirectUri.pathname || "/";
 
 /**
- * Start a lightweight HTTP server that listens for the Gemini OAuth redirect.
- * Returns a listener object that resolves with the callback once received.
+ * Starts a lightweight HTTP server that listens for the Gemini OAuth redirect
+ * and resolves with the captured callback URL.
  */
 export async function startOAuthListener(
   { timeoutMs = 5 * 60 * 1000 }: OAuthListenerOptions = {},
@@ -206,7 +206,6 @@ const successResponse = `<!DOCTYPE html>
 
     resolveCallback(url);
 
-    // Close the server after handling the first valid callback.
     setImmediate(() => {
       server.close();
     });

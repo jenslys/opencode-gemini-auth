@@ -43,6 +43,9 @@ interface OnboardUserPayload {
 }
 
 class ProjectIdRequiredError extends Error {
+  /**
+   * Error raised when a required Google Cloud project is missing during Gemini onboarding.
+   */
   constructor() {
     super(
       "Google Gemini requires a Google Cloud project. Enable the Gemini for Google Cloud API on a project you control, rerun `opencode auth login`, and supply that project ID when prompted.",
@@ -50,6 +53,9 @@ class ProjectIdRequiredError extends Error {
   }
 }
 
+/**
+ * Builds metadata headers required by the Code Assist API.
+ */
 function buildMetadata(projectId?: string): Record<string, string> {
   const metadata: Record<string, string> = {
     ideType: CODE_ASSIST_METADATA.ideType,
@@ -62,6 +68,9 @@ function buildMetadata(projectId?: string): Record<string, string> {
   return metadata;
 }
 
+/**
+ * Selects the default tier ID from the allowed tiers list.
+ */
 function getDefaultTierId(allowedTiers?: GeminiUserTier[]): string | undefined {
   if (!allowedTiers || allowedTiers.length === 0) {
     return undefined;
@@ -74,17 +83,26 @@ function getDefaultTierId(allowedTiers?: GeminiUserTier[]): string | undefined {
   return allowedTiers[0]?.id;
 }
 
+/**
+ * Promise-based delay utility.
+ */
 function wait(ms: number): Promise<void> {
   return new Promise(function (resolve) {
     setTimeout(resolve, ms);
   });
 }
 
+/**
+ * Generates a cache key for project context based on refresh token.
+ */
 function getCacheKey(auth: OAuthAuthDetails): string | undefined {
   const refresh = auth.refresh?.trim();
   return refresh ? refresh : undefined;
 }
 
+/**
+ * Clears cached project context results and pending promises, globally or for a refresh key.
+ */
 export function invalidateProjectContextCache(refresh?: string): void {
   if (!refresh) {
     projectContextPendingCache.clear();
@@ -95,6 +113,9 @@ export function invalidateProjectContextCache(refresh?: string): void {
   projectContextResultCache.delete(refresh);
 }
 
+/**
+ * Loads managed project information for the given access token and optional project.
+ */
 export async function loadManagedProject(
   accessToken: string,
   projectId?: string,
@@ -132,6 +153,9 @@ export async function loadManagedProject(
 }
 
 
+/**
+ * Onboards a managed project for the user, optionally retrying until completion.
+ */
 export async function onboardManagedProject(
   accessToken: string,
   tierId: string,
@@ -190,6 +214,9 @@ export async function onboardManagedProject(
   return undefined;
 }
 
+/**
+ * Resolves an effective project ID for the current auth state, caching results per refresh token.
+ */
 export async function ensureProjectContext(
   auth: OAuthAuthDetails,
   client: PluginClient,
