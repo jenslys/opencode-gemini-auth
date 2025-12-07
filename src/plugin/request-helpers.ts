@@ -27,15 +27,19 @@ export interface GeminiUsageMetadata {
 }
 
 /**
- * Normalized thinking configuration accepted by Gemini.
+ * Thinking configuration accepted by Gemini.
+ * - Gemini 3 models use thinkingLevel (string: 'low', 'medium', 'high')
+ * - Gemini 2.5 models use thinkingBudget (number)
  */
 export interface ThinkingConfig {
   thinkingBudget?: number;
+  thinkingLevel?: string;
   includeThoughts?: boolean;
 }
 
 /**
- * Ensures thinkingConfig is valid: includeThoughts only allowed when budget > 0.
+ * Normalizes thinkingConfig - passes through values as-is without mapping.
+ * User should use thinkingLevel for Gemini 3 and thinkingBudget for Gemini 2.5.
  */
 export function normalizeThinkingConfig(config: unknown): ThinkingConfig | undefined {
   if (!config || typeof config !== "object") {
@@ -44,15 +48,14 @@ export function normalizeThinkingConfig(config: unknown): ThinkingConfig | undef
 
   const record = config as Record<string, unknown>;
   const budgetRaw = record.thinkingBudget ?? record.thinking_budget;
+  const levelRaw = record.thinkingLevel ?? record.thinking_level;
   const includeRaw = record.includeThoughts ?? record.include_thoughts;
 
   const thinkingBudget = typeof budgetRaw === "number" && Number.isFinite(budgetRaw) ? budgetRaw : undefined;
+  const thinkingLevel = typeof levelRaw === "string" && levelRaw.length > 0 ? levelRaw.toLowerCase() : undefined;
   const includeThoughts = typeof includeRaw === "boolean" ? includeRaw : undefined;
 
-  const enableThinking = thinkingBudget !== undefined && thinkingBudget > 0;
-  const finalInclude = enableThinking ? includeThoughts ?? false : false;
-
-  if (!enableThinking && finalInclude === false && thinkingBudget === undefined && includeThoughts === undefined) {
+  if (thinkingBudget === undefined && thinkingLevel === undefined && includeThoughts === undefined) {
     return undefined;
   }
 
@@ -60,8 +63,11 @@ export function normalizeThinkingConfig(config: unknown): ThinkingConfig | undef
   if (thinkingBudget !== undefined) {
     normalized.thinkingBudget = thinkingBudget;
   }
-  if (finalInclude !== undefined) {
-    normalized.includeThoughts = finalInclude;
+  if (thinkingLevel !== undefined) {
+    normalized.thinkingLevel = thinkingLevel;
+  }
+  if (includeThoughts !== undefined) {
+    normalized.includeThoughts = includeThoughts;
   }
   return normalized;
 }
