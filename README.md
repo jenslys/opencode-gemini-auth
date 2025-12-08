@@ -25,18 +25,71 @@ falls back to the classic copy/paste flow and explains what to do.
 ## Updating
 
 > [!WARNING]
-> OpenCode does NOT auto-update plugins
+> Opencode does NOT auto-update plugins.
 
-To get the latest version:
+To get the latest version, you need to clear the cached plugin and let Opencode reinstall it:
 
 ```bash
-(cd ~ && sed -i.bak '/"opencode-gemini-auth"/d' .cache/opencode/package.json && \
-rm -rf .cache/opencode/node_modules/opencode-gemini-auth && \
-echo "Plugin update script finished successfully.")
+# Remove the plugin from cache
+rm -rf ~/.cache/opencode/node_modules/opencode-gemini-auth
+
+# Run Opencode to trigger reinstall
+opencode
 ```
 
-```bash
-opencode  # Reinstalls latest
+Alternatively, you can manually remove the dependency from `~/.cache/opencode/package.json` if the above doesn't work.
+
+## Thinking Configuration
+
+This plugin supports configuring "thinking" capabilities for Gemini models via the `thinkingConfig` option.
+
+*   **Gemini 3 models** use `thinkingLevel` (string: `'low'`, `'medium'`, `'high'`).
+*   **Gemini 2.5 models** use `thinkingBudget` (number).
+
+The plugin passes these values through to the API as configured.
+
+### Examples
+
+**Gemini 3 (using `thinkingLevel`):**
+
+```json
+{
+  "provider": {
+    "google": {
+      "models": {
+        "gemini-3-pro-preview": {
+          "options": {
+            "thinkingConfig": {
+              "thinkingLevel": "high",
+              "includeThoughts": true
+            }
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+**Gemini 2.5 (using `thinkingBudget`):**
+
+```json
+{
+  "provider": {
+    "google": {
+      "models": {
+        "gemini-2.5-flash": {
+          "options": {
+            "thinkingConfig": {
+              "thinkingBudget": 8192,
+              "includeThoughts": true
+            }
+          }
+        }
+      }
+    }
+  }
+}
 ```
 
 ## Local Development
