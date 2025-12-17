@@ -40,6 +40,8 @@ function isRateLimited(refreshToken: string): boolean {
   return true;
 }
 
+let capturedGetAuth: GetAuth | null = null;
+
 /**
  * Registers the Gemini OAuth provider for Opencode, handling auth, request rewriting,
  * debug logging, and response normalization for Gemini Code Assist endpoints.
@@ -50,6 +52,7 @@ export const GeminiCLIOAuthPlugin = async (
   auth: {
     provider: GEMINI_PROVIDER_ID,
     loader: async (getAuth: GetAuth, provider: Provider): Promise<LoaderResult | null> => {
+      capturedGetAuth = getAuth;
       const auth = await getAuth();
       if (!isOAuthAuth(auth)) {
         return null;
@@ -231,7 +234,10 @@ export const GeminiCLIOAuthPlugin = async (
           const handleCallback = async (cb: () => Promise<GeminiTokenExchangeResult>): Promise<GeminiTokenExchangeResult> => {
             const result = await cb();
             if (result.type === "success") {
-              const currentAuth = await client.auth.get({ path: { id: GEMINI_PROVIDER_ID } }).catch(() => null);
+              if (!capturedGetAuth) {
+                await client.config.providers().catch(() => null);
+              }
+              const currentAuth = capturedGetAuth ? await capturedGetAuth().catch(() => null) : null;
               const newPart = parseRefreshParts(result.refresh);
               let allParts = [newPart];
               
