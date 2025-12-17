@@ -67,6 +67,13 @@ export interface RefreshParts {
   refreshToken: string;
   projectId?: string;
   managedProjectId?: string;
+  email?: string;
+}
+
+export interface Account {
+  parts: RefreshParts;
+  access?: string;
+  expires?: number;
 }
 
 export interface ProjectContextResult {

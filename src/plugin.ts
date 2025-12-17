@@ -1,7 +1,7 @@
 import { GEMINI_PROVIDER_ID, GEMINI_REDIRECT_URI } from "./constants";
 import { authorizeGemini, exchangeGemini } from "./gemini/oauth";
 import type { GeminiTokenExchangeResult } from "./gemini/oauth";
-import { accessTokenExpired, isOAuthAuth } from "./plugin/auth";
+import { accessTokenExpired, formatAllAccounts, formatRefreshParts, isOAuthAuth, parseAllAccounts, parseRefreshParts } from "./plugin/auth";
 import { promptProjectId } from "./plugin/cli";
 import { ensureProjectContext } from "./plugin/project";
 import { startGeminiDebugRequest } from "./plugin/debug";
@@ -10,16 +10,35 @@ import {
   prepareGeminiRequest,
   transformGeminiResponse,
 } from "./plugin/request";
-import { refreshAccessToken } from "./plugin/token";
+import { refreshAccountToken } from "./plugin/token";
 import { startOAuthListener, type OAuthListener } from "./plugin/server";
+import { resolveCachedAuth } from "./plugin/cache";
 import type {
+  Account,
   GetAuth,
   LoaderResult,
+  OAuthAuthDetails,
   PluginContext,
   PluginResult,
   ProjectContextResult,
   Provider,
 } from "./plugin/types";
+
+const rateLimits = new Map<string, number>();
+
+function markRateLimited(refreshToken: string, retryAfterMs: number) {
+  rateLimits.set(refreshToken, Date.now() + retryAfterMs);
+}
+
+function isRateLimited(refreshToken: string): boolean {
+  const expiry = rateLimits.get(refreshToken);
+  if (!expiry) return false;
+  if (Date.now() > expiry) {
+    rateLimits.delete(refreshToken);
+    return false;
+  }
+  return true;
+}
 
 /**
  * Registers the Gemini OAuth provider for Opencode, handling auth, request rewriting,
@@ -56,16 +75,43 @@ export const GeminiCLIOAuthPlugin = async (
             return fetch(input, init);
           }
 
-          let authRecord = latestAuth;
-          if (accessTokenExpired(authRecord)) {
-            const refreshed = await refreshAccessToken(authRecord, client);
-            if (!refreshed) {
-              return fetch(input, init);
-            }
-            authRecord = refreshed;
+          const accountParts = parseAllAccounts(latestAuth.refresh);
+          if (accountParts.length === 0) {
+            return fetch(input, init);
           }
 
-          const accessToken = authRecord.access;
+          // Filter out rate-limited accounts
+          const availableParts = accountParts.filter(p => !isRateLimited(p.refreshToken));
+          const pool = availableParts.length > 0 ? availableParts : accountParts;
+
+          // Simple round-robin based on hash of input or random
+          const index = Math.floor(Math.random() * pool.length);
+          const parts = pool[index];
+
+          let account: Account = {
+            parts,
+          };
+
+          // Try to resolve from cache
+          const cached = resolveCachedAuth({
+            type: "oauth",
+            refresh: formatRefreshParts(parts),
+          } as OAuthAuthDetails);
+          
+          account.access = cached.access;
+          account.expires = cached.expires;
+
+          if (accessTokenExpired(account as OAuthAuthDetails)) {
+            const refreshed = await refreshAccountToken(account, latestAuth, client);
+            if (!refreshed) {
+              // If refresh fails, try next available account if possible
+              // For simplicity, we just fall back to standard fetch or return error
+              return fetch(input, init);
+            }
+            account = refreshed;
+          }
+
+          const accessToken = account.access;
           if (!accessToken) {
             return fetch(input, init);
           }
@@ -75,7 +121,12 @@ export const GeminiCLIOAuthPlugin = async (
            */
           async function resolveProjectContext(): Promise<ProjectContextResult> {
             try {
-              return await ensureProjectContext(authRecord, client);
+              return await ensureProjectContext({
+                type: "oauth",
+                refresh: formatRefreshParts(account.parts),
+                access: account.access,
+                expires: account.expires,
+              }, client);
             } catch (error) {
               if (error instanceof Error) {
                 console.error(error.message);
@@ -111,6 +162,15 @@ export const GeminiCLIOAuthPlugin = async (
           });
 
           const response = await fetch(request, transformedInit);
+          
+          if (response.status === 429) {
+            const retryAfterMs = parseInt(response.headers.get("retry-after-ms") || "60000");
+            markRateLimited(account.parts.refreshToken, retryAfterMs);
+            // We could retry internally with another account, but Opencode has its own retry logic.
+            // By returning 429 with Retry-After, we let Opencode handle the delay.
+            // But if we have other accounts, we could technically just retry NOW.
+          }
+
           return transformGeminiResponse(response, streaming, debugContext, requestedModel);
         },
       };
@@ -168,6 +228,25 @@ export const GeminiCLIOAuthPlugin = async (
           const projectId = await promptProjectId();
           const authorization = await authorizeGemini(projectId);
 
+          const handleCallback = async (cb: () => Promise<GeminiTokenExchangeResult>): Promise<GeminiTokenExchangeResult> => {
+            const result = await cb();
+            if (result.type === "success") {
+              const currentAuth = await client.auth.get({ path: { id: GEMINI_PROVIDER_ID } }).catch(() => null);
+              const newPart = parseRefreshParts(result.refresh);
+              let allParts = [newPart];
+              
+              if (currentAuth && isOAuthAuth(currentAuth)) {
+                const existingParts = parseAllAccounts(currentAuth.refresh);
+                // Remove existing if email matches to avoid duplicates
+                const filtered = existingParts.filter(p => p.email !== newPart.email);
+                allParts = [...filtered, newPart];
+              }
+              
+              result.refresh = formatAllAccounts(allParts);
+            }
+            return result;
+          };
+
           if (listener) {
             return {
               url: authorization.url,
@@ -187,7 +266,7 @@ export const GeminiCLIOAuthPlugin = async (
                     };
                   }
 
-                  return await exchangeGemini(code, state);
+                  return await handleCallback(() => exchangeGemini(code, state));
                 } catch (error) {
                   return {
                     type: "failed",
@@ -221,7 +300,7 @@ export const GeminiCLIOAuthPlugin = async (
                   };
                 }
 
-                return exchangeGemini(code, state);
+                return await handleCallback(() => exchangeGemini(code, state));
               } catch (error) {
                 return {
                   type: "failed",
