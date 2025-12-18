@@ -155,7 +155,12 @@ export async function exchangeGemini(
       return { type: "failed", error: "Missing refresh token in response" };
     }
 
-    const storedRefresh = `${refreshToken}|${projectId || ""}`;
+    const storedRefresh = [
+      refreshToken,
+      projectId || "",
+      "",
+      userInfo.email || "",
+    ].join("|").replace(/\|+$/, "");
 
     return {
       type: "success",
