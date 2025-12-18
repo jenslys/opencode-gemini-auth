@@ -1,70 +1,72 @@
 # Gemini OAuth Plugin for Opencode
 
-Authenticate the Opencode CLI with your Google account so you can use your
-existing Gemini plan and its included quota instead of API billing.
+![License](https://img.shields.io/npm/l/opencode-gemini-auth)
+![Version](https://img.shields.io/npm/v/opencode-gemini-auth)
 
-## Setup
+**Authenticate the Opencode CLI with your Google account.** This plugin enables
+you to use your existing Gemini plan and quotas (including the free tier)
+directly within Opencode, bypassing separate API billing.
 
-1. Add the plugin to your [Opencode config](https://opencode.ai/docs/config/):
+## Prerequisites
 
-   ```json
-   {
-     "$schema": "https://opencode.ai/config.json",
-     "plugin": ["opencode-gemini-auth"]
-   }
+- [Opencode CLI](https://opencode.ai) installed.
+- A Google account with access to Gemini.
+
+## Installation
+
+Add the plugin to your Opencode configuration file
+(`~/.config/opencode/config.json` or similar):
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugin": ["opencode-gemini-auth"]
+}
+```
+
+## Usage
+
+1. **Login**: Run the authentication command in your terminal:
+
+   ```bash
+   opencode auth login
    ```
 
-2. Run `opencode auth login`.
-3. Choose the Google provider and select **OAuth with Google (Gemini CLI)**.
+2. **Select Provider**: Choose **Google** from the list.
+3. **Authenticate**: Select **OAuth with Google (Gemini CLI)**.
+   - A browser window will open for you to approve the access.
+   - The plugin spins up a temporary local server to capture the callback.
+   - If the local server fails (e.g., port in use or headless environment),
+     you can manually copy/paste the callback URL as instructed.
 
-If you want to force a specific Google Cloud project, set it after you authenticate:
+Once authenticated, Opencode will use your Google account for Gemini requests.
+
+## Configuration
+
+### Google Cloud Project
+
+By default, the plugin attempts to provision or find a suitable Google Cloud
+project. To force a specific project, set the `projectId` in your configuration:
 
 ```json
 {
   "provider": {
     "google": {
       "options": {
-        "projectId": "your-gcp-project-id"
+        "projectId": "your-specific-project-id"
       }
     }
   }
 }
 ```
 
-The plugin spins up a local callback listener, so after approving in the
-browser you'll land on an "Authentication complete" page with no URL
-copy/paste required. If that port is already taken, the CLI automatically
-falls back to the classic copy/paste flow and explains what to do.
+### Thinking Models
 
-## Updating
+Configure "thinking" capabilities for Gemini models using the `thinkingConfig`
+option in your `config.json`.
 
-> [!WARNING]
-> Opencode does NOT auto-update plugins.
-
-To get the latest version, you need to clear the cached plugin and let Opencode reinstall it:
-
-```bash
-# Remove the plugin from cache
-rm -rf ~/.cache/opencode/node_modules/opencode-gemini-auth
-
-# Run Opencode to trigger reinstall
-opencode
-```
-
-Alternatively, you can manually remove the dependency from `~/.cache/opencode/package.json` if the above doesn't work.
-
-## Thinking Configuration
-
-This plugin supports configuring "thinking" capabilities for Gemini models via the `thinkingConfig` option.
-
-- **Gemini 3 models** (`gemini-3-pro-preview`, `gemini-3-flash-preview`) use `thinkingLevel` (string: `'low'`, `'high'`).
-- **Gemini 2.5 models** use `thinkingBudget` (number).
-
-The plugin passes these values through to the API as configured.
-
-### Examples
-
-**Gemini 3 (using `thinkingLevel`):**
+**Gemini 3 (Thinking Level)**
+Use `thinkingLevel` (`"low"`, `"high"`) for Gemini 3 models.
 
 ```json
 {
@@ -78,14 +80,6 @@ The plugin passes these values through to the API as configured.
               "includeThoughts": true
             }
           }
-        },
-        "gemini-3-flash-preview": {
-          "options": {
-            "thinkingConfig": {
-              "thinkingLevel": "low",
-              "includeThoughts": true
-            }
-          }
         }
       }
     }
@@ -93,7 +87,8 @@ The plugin passes these values through to the API as configured.
 }
 ```
 
-**Gemini 2.5 (using `thinkingBudget`):**
+**Gemini 2.5 (Thinking Budget)**
+Use `thinkingBudget` (token count) for Gemini 2.5 models.
 
 ```json
 {
@@ -114,72 +109,65 @@ The plugin passes these values through to the API as configured.
 }
 ```
 
-## Local Development
+## Troubleshooting
 
-First, clone the repository and install dependencies:
+### Manual Google Cloud Setup
 
-```bash
-git clone https://github.com/jenslys/opencode-gemini-auth.git
-cd opencode-gemini-auth
-bun install
-```
+If automatic provisioning fails, you may need to set up the project manually:
 
-When you want Opencode to use a local checkout of this plugin, point the
-`plugin` entry in your config to the folder via a `file://` URL:
+1. Go to the [Google Cloud Console](https://console.cloud.google.com/).
+2. Create or select a project.
+3. Enable the **Gemini for Google Cloud API**
+   (`cloudaicompanion.googleapis.com`).
+4. Configure the `projectId` in your Opencode config as shown above.
 
-```json
-{
-  "$schema": "https://opencode.ai/config.json",
-  "plugin": ["file:///absolute/path/to/opencode-gemini-auth"]
-}
-```
+### Debugging
 
-Replace `/absolute/path/to/opencode-gemini-auth` with the absolute path to
-your local clone.
-
-## Manual Google Cloud Setup
-
-If automatic provisioning fails, use the console:
-
-1. Go to the Google Cloud Console and create (or select) a project, e.g. `gemini`.
-2. Select that project.
-3. Enable the **Gemini for Google Cloud API** (`cloudaicompanion.googleapis.com`).
-4. Set the project **ID** (not the display name) in your Opencode config:
-
-   ```json
-   {
-     "provider": {
-       "google": {
-         "options": {
-           "projectId": "your-gcp-project-id"
-         }
-       }
-     }
-   }
-   ```
-
-5. Re-run your Opencode command (or restart Opencode if it's already running).
-
-## Debugging Gemini Requests
-
-Set `OPENCODE_GEMINI_DEBUG=1` in the environment when you run an Opencode
-command to capture every Gemini request/response that this plugin issues. When
-enabled, the plugin writes to a timestamped `gemini-debug-<ISO>.log` file in
-your current working directory so the CLI output stays clean.
+To view detailed logs of Gemini requests and responses, set the
+`OPENCODE_GEMINI_DEBUG` environment variable:
 
 ```bash
 OPENCODE_GEMINI_DEBUG=1 opencode
 ```
 
-The logger shows the transformed URL, HTTP method, sanitized headers (the
-`Authorization` header is redacted), whether the call used streaming, and a
-truncated preview (2 KB) of both the request and response bodies. This is handy
-when diagnosing "Bad Request" responses from Gemini. Remember that payloads may
-still include parts of your prompt or response, so only enable this flag when
-you're comfortable keeping that information in the generated log file.
+This will generate `gemini-debug-<timestamp>.log` files in your working
+directory containing sanitized request/response details.
 
-**404s on `gemini-2.5-flash-image`.** Opencode fires internal
-summarization/title requests at `gemini-2.5-flash-image`. The plugin
-automatically remaps those payloads to `gemini-2.5-flash`, eliminating the extra
-404s for accounts without image access. If you still see a 404, confirm your
-project actually has access to the fallback model.
+### Updating
+
+Opencode does not automatically update plugins. To update to the latest version,
+you must clear the cached plugin:
+
+```bash
+# Clear the specific plugin cache
+rm -rf ~/.cache/opencode/node_modules/opencode-gemini-auth
+
+# Run Opencode to trigger a fresh install
+opencode
+```
+
+## Development
+
+To develop on this plugin locally:
+
+1. **Clone**:
+
+   ```bash
+   git clone https://github.com/jenslys/opencode-gemini-auth.git
+   cd opencode-gemini-auth
+   bun install
+   ```
+
+2. **Link**:
+   Update your Opencode config to point to your local directory using a
+   `file://` URL:
+
+   ```json
+   {
+     "plugin": ["file:///absolute/path/to/opencode-gemini-auth"]
+   }
+   ```
+
+## License
+
+MIT
