@@ -22,9 +22,17 @@ export function parseRefreshParts(refresh: string): RefreshParts {
  * Serializes refresh token parts into the stored string format.
  */
 export function formatRefreshParts(parts: RefreshParts): string {
+  if (!parts.refreshToken) {
+    return "";
+  }
+
+  if (!parts.projectId && !parts.managedProjectId) {
+    return parts.refreshToken;
+  }
+
   const projectSegment = parts.projectId ?? "";
-  const base = `${parts.refreshToken}|${projectSegment}`;
-  return parts.managedProjectId ? `${base}|${parts.managedProjectId}` : base;
+  const managedSegment = parts.managedProjectId ?? "";
+  return `${parts.refreshToken}|${projectSegment}|${managedSegment}`;
 }
 
 /**

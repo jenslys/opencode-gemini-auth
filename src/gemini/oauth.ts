@@ -14,7 +14,6 @@ interface PkcePair {
 
 interface GeminiAuthState {
   verifier: string;
-  projectId: string;
 }
 
 /**
@@ -23,7 +22,6 @@ interface GeminiAuthState {
 export interface GeminiAuthorization {
   url: string;
   verifier: string;
-  projectId: string;
 }
 
 interface GeminiTokenExchangeSuccess {
@@ -32,7 +30,6 @@ interface GeminiTokenExchangeSuccess {
   access: string;
   expires: number;
   email?: string;
-  projectId: string;
 }
 
 interface GeminiTokenExchangeFailure {
@@ -74,14 +71,13 @@ function decodeState(state: string): GeminiAuthState {
   }
   return {
     verifier: parsed.verifier,
-    projectId: typeof parsed.projectId === "string" ? parsed.projectId : "",
   };
 }
 
 /**
- * Build the Gemini OAuth authorization URL including PKCE and optional project metadata.
+ * Build the Gemini OAuth authorization URL including PKCE.
  */
-export async function authorizeGemini(projectId = ""): Promise<GeminiAuthorization> {
+export async function authorizeGemini(): Promise<GeminiAuthorization> {
   const pkce = (await generatePKCE()) as PkcePair;
 
   const url = new URL("https://accounts.google.com/o/oauth2/v2/auth");
@@ -91,17 +87,13 @@ export async function authorizeGemini(projectId = ""): Promise<GeminiAuthorizati
   url.searchParams.set("scope", GEMINI_SCOPES.join(" "));
   url.searchParams.set("code_challenge", pkce.challenge);
   url.searchParams.set("code_challenge_method", "S256");
-  url.searchParams.set(
-    "state",
-    encodeState({ verifier: pkce.verifier, projectId: projectId || "" }),
-  );
+  url.searchParams.set("state", encodeState({ verifier: pkce.verifier }));
   url.searchParams.set("access_type", "offline");
   url.searchParams.set("prompt", "consent");
 
   return {
     url: url.toString(),
     verifier: pkce.verifier,
-    projectId: projectId || "",
   };
 }
 
@@ -113,7 +105,7 @@ export async function exchangeGemini(
   state: string,
 ): Promise<GeminiTokenExchangeResult> {
   try {
-    const { verifier, projectId } = decodeState(state);
+    const { verifier } = decodeState(state);
 
     const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
       method: "POST",
@@ -155,15 +147,12 @@ export async function exchangeGemini(
       return { type: "failed", error: "Missing refresh token in response" };
     }
 
-    const storedRefresh = `${refreshToken}|${projectId || ""}`;
-
     return {
       type: "success",
-      refresh: storedRefresh,
+      refresh: refreshToken,
       access: tokenPayload.access_token,
       expires: Date.now() + tokenPayload.expires_in * 1000,
       email: userInfo.email,
-      projectId: projectId || "",
     };
   } catch (error) {
     return {

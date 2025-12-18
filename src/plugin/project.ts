@@ -48,7 +48,7 @@ class ProjectIdRequiredError extends Error {
    */
   constructor() {
     super(
-      "Google Gemini requires a Google Cloud project. Enable the Gemini for Google Cloud API on a project you control, rerun `opencode auth login`, and supply that project ID when prompted.",
+      "Google Gemini requires a Google Cloud project. Enable the Gemini for Google Cloud API on a project you control, then set `provider.google.options.projectId` in your Opencode config (or set OPENCODE_GEMINI_PROJECT_ID).",
     );
   }
 }
@@ -109,8 +109,21 @@ export function invalidateProjectContextCache(refresh?: string): void {
     projectContextResultCache.clear();
     return;
   }
+
   projectContextPendingCache.delete(refresh);
   projectContextResultCache.delete(refresh);
+
+  const prefix = `${refresh}|cfg:`;
+  for (const key of projectContextPendingCache.keys()) {
+    if (key.startsWith(prefix)) {
+      projectContextPendingCache.delete(key);
+    }
+  }
+  for (const key of projectContextResultCache.keys()) {
+    if (key.startsWith(prefix)) {
+      projectContextResultCache.delete(key);
+    }
+  }
 }
 
 /**
@@ -220,13 +233,19 @@ export async function onboardManagedProject(
 export async function ensureProjectContext(
   auth: OAuthAuthDetails,
   client: PluginClient,
+  configuredProjectId?: string,
 ): Promise<ProjectContextResult> {
   const accessToken = auth.access;
   if (!accessToken) {
     return { auth, effectiveProjectId: "" };
   }
 
-  const cacheKey = getCacheKey(auth);
+  const cacheKey = (() => {
+    const base = getCacheKey(auth);
+    if (!base) return undefined;
+    const project = configuredProjectId?.trim() ?? "";
+    return project ? `${base}|cfg:${project}` : base;
+  })();
   if (cacheKey) {
     const cached = projectContextResultCache.get(cacheKey);
     if (cached) {
@@ -240,21 +259,24 @@ export async function ensureProjectContext(
 
   const resolveContext = async (): Promise<ProjectContextResult> => {
     const parts = parseRefreshParts(auth.refresh);
-    if (parts.projectId || parts.managedProjectId) {
+    const effectiveConfiguredProjectId = configuredProjectId?.trim() || undefined;
+    const projectId = effectiveConfiguredProjectId ?? parts.projectId;
+
+    if (projectId || parts.managedProjectId) {
       return {
         auth,
-        effectiveProjectId: parts.projectId || parts.managedProjectId || "",
+        effectiveProjectId: projectId || parts.managedProjectId || "",
       };
     }
 
-    const loadPayload = await loadManagedProject(accessToken, parts.projectId);
+    const loadPayload = await loadManagedProject(accessToken, projectId);
     if (loadPayload?.cloudaicompanionProject) {
       const managedProjectId = loadPayload.cloudaicompanionProject;
       const updatedAuth: OAuthAuthDetails = {
         ...auth,
         refresh: formatRefreshParts({
           refreshToken: parts.refreshToken,
-          projectId: parts.projectId,
+          projectId,
           managedProjectId,
         }),
       };
@@ -283,13 +305,13 @@ export async function ensureProjectContext(
       throw new ProjectIdRequiredError();
     }
 
-    const managedProjectId = await onboardManagedProject(accessToken, tierId, parts.projectId);
+    const managedProjectId = await onboardManagedProject(accessToken, tierId, projectId);
     if (managedProjectId) {
       const updatedAuth: OAuthAuthDetails = {
         ...auth,
         refresh: formatRefreshParts({
           refreshToken: parts.refreshToken,
-          projectId: parts.projectId,
+          projectId,
           managedProjectId,
         }),
       };

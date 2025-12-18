@@ -17,6 +17,20 @@ existing Gemini plan and its included quota instead of API billing.
 2. Run `opencode auth login`.
 3. Choose the Google provider and select **OAuth with Google (Gemini CLI)**.
 
+If you want to force a specific Google Cloud project, set it after you authenticate:
+
+```json
+{
+  "provider": {
+    "google": {
+      "options": {
+        "projectId": "your-gcp-project-id"
+      }
+    }
+  }
+}
+```
+
 The plugin spins up a local callback listener, so after approving in the
 browser you'll land on an "Authentication complete" page with no URL
 copy/paste required. If that port is already taken, the CLI automatically
@@ -130,7 +144,21 @@ If automatic provisioning fails, use the console:
 1. Go to the Google Cloud Console and create (or select) a project, e.g. `gemini`.
 2. Select that project.
 3. Enable the **Gemini for Google Cloud API** (`cloudaicompanion.googleapis.com`).
-4. Re-run `opencode auth login` and enter the project **ID** (not the display name).
+4. Set the project **ID** (not the display name) in your Opencode config:
+
+   ```json
+   {
+     "provider": {
+       "google": {
+         "options": {
+           "projectId": "your-gcp-project-id"
+         }
+       }
+     }
+   }
+   ```
+
+5. Re-run your Opencode command (or restart Opencode if it's already running).
 
 ## Debugging Gemini Requests
 

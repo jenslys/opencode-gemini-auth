@@ -1,8 +1,9 @@
+import { spawn } from "node:child_process";
+
 import { GEMINI_PROVIDER_ID, GEMINI_REDIRECT_URI } from "./constants";
 import { authorizeGemini, exchangeGemini } from "./gemini/oauth";
 import type { GeminiTokenExchangeResult } from "./gemini/oauth";
 import { accessTokenExpired, isOAuthAuth } from "./plugin/auth";
-import { promptProjectId } from "./plugin/cli";
 import { ensureProjectContext } from "./plugin/project";
 import { startGeminiDebugRequest } from "./plugin/debug";
 import {
@@ -35,6 +36,17 @@ export const GeminiCLIOAuthPlugin = async (
       if (!isOAuthAuth(auth)) {
         return null;
       }
+
+      const providerOptions =
+        provider && typeof provider === "object"
+          ? ((provider as { options?: Record<string, unknown> }).options ?? undefined)
+          : undefined;
+      const projectIdFromConfig =
+        providerOptions && typeof providerOptions.projectId === "string"
+          ? providerOptions.projectId.trim()
+          : "";
+      const projectIdFromEnv = process.env.OPENCODE_GEMINI_PROJECT_ID?.trim() ?? "";
+      const configuredProjectId = projectIdFromEnv || projectIdFromConfig || undefined;
 
       if (provider.models) {
         for (const model of Object.values(provider.models)) {
@@ -75,7 +87,7 @@ export const GeminiCLIOAuthPlugin = async (
            */
           async function resolveProjectContext(): Promise<ProjectContextResult> {
             try {
-              return await ensureProjectContext(authRecord, client);
+              return await ensureProjectContext(authRecord, client, configuredProjectId);
             } catch (error) {
               if (error instanceof Error) {
                 console.error(error.message);
@@ -120,8 +132,6 @@ export const GeminiCLIOAuthPlugin = async (
         label: "OAuth with Google (Gemini CLI)",
         type: "oauth",
         authorize: async () => {
-          console.log("\n=== Google Gemini OAuth Setup ===");
-
           const isHeadless = !!(
             process.env.SSH_CONNECTION ||
             process.env.SSH_CLIENT ||
@@ -133,40 +143,25 @@ export const GeminiCLIOAuthPlugin = async (
           if (!isHeadless) {
             try {
               listener = await startOAuthListener();
-              const { host } = new URL(GEMINI_REDIRECT_URI);
-              console.log("1. You'll be asked to sign in to your Google account and grant permission.");
-              console.log(
-                `2. We'll automatically capture the browser redirect on http://${host}. No need to paste anything back here.`,
-              );
-              console.log("3. Once you see the 'Authentication complete' page in your browser, return to this terminal.");
             } catch (error) {
-              console.log("1. You'll be asked to sign in to your Google account and grant permission.");
-              console.log("2. After you approve, the browser will try to redirect to a 'localhost' page.");
-              console.log(
-                "3. This page will show an error like 'This site can't be reached'. This is perfectly normal and means it worked!",
-              );
-              console.log(
-                "4. Once you see that error, copy the entire URL from the address bar, paste it back here, and press Enter.",
-              );
               if (error instanceof Error) {
-                console.log(`\nWarning: Couldn't start the local callback listener (${error.message}). Falling back to manual copy/paste.`);
+                console.log(
+                  `Warning: Couldn't start the local callback listener (${error.message}). You'll need to paste the callback URL.`,
+                );
               } else {
-                console.log("\nWarning: Couldn't start the local callback listener. Falling back to manual copy/paste.");
+                console.log(
+                  "Warning: Couldn't start the local callback listener. You'll need to paste the callback URL.",
+                );
               }
             }
           } else {
-            console.log("Headless environment detected. Using manual OAuth flow.");
-            console.log("1. You'll be asked to sign in to your Google account and grant permission.");
-            console.log("2. After you approve, the browser will redirect to a 'localhost' URL.");
-            console.log(
-              "3. Copy the ENTIRE URL from your browser's address bar (it will look like: http://localhost:8085/oauth2callback?code=...&state=...)",
-            );
-            console.log("4. Paste the URL back here and press Enter.");
+            console.log("Headless environment detected. You'll need to paste the callback URL.");
           }
-          console.log("\n");
 
-          const projectId = await promptProjectId();
-          const authorization = await authorizeGemini(projectId);
+          const authorization = await authorizeGemini();
+          if (!isHeadless) {
+            openBrowserUrl(authorization.url);
+          }
 
           if (listener) {
             return {
@@ -206,7 +201,7 @@ export const GeminiCLIOAuthPlugin = async (
           return {
             url: authorization.url,
             instructions:
-              "Visit the URL above, complete OAuth, ignore the localhost connection error, and paste the full redirected URL (e.g., http://localhost:8085/oauth2callback?code=...&state=...): ",
+              "Complete OAuth in your browser, then paste the full redirected URL (e.g., http://localhost:8085/oauth2callback?code=...&state=...)",
             method: "code",
             callback: async (callbackUrl: string): Promise<GeminiTokenExchangeResult> => {
               try {
@@ -252,4 +247,21 @@ function toUrlString(value: RequestInfo): string {
     return candidate;
   }
   return value.toString();
+}
+
+function openBrowserUrl(url: string): void {
+  try {
+    // Best-effort: don't block auth flow if spawning fails.
+    const platform = process.platform;
+    const command =
+      platform === "darwin" ? "open" : platform === "win32" ? "cmd" : "xdg-open";
+    const args =
+      platform === "win32" ? ["/c", "start", "", url] : [url];
+    const child = spawn(command, args, {
+      stdio: "ignore",
+      detached: true,
+    });
+    child.unref?.();
+  } catch {
+  }
 }

@@ -26,6 +26,7 @@ export interface ProviderModel {
 
 export interface Provider {
   models?: Record<string, ProviderModel>;
+  options?: Record<string, unknown>;
 }
 
 export interface LoaderResult {
@@ -41,7 +42,7 @@ export interface AuthMethod {
     url: string;
     instructions: string;
     method: string;
-    callback: (callbackUrl: string) => Promise<GeminiTokenExchangeResult>;
+    callback: (() => Promise<GeminiTokenExchangeResult>) | ((callbackUrl: string) => Promise<GeminiTokenExchangeResult>);
   }>;
 }
 
