@@ -43,8 +43,8 @@ Alternatively, you can manually remove the dependency from `~/.cache/opencode/pa
 
 This plugin supports configuring "thinking" capabilities for Gemini models via the `thinkingConfig` option.
 
-*   **Gemini 3 models** (`gemini-3-pro-preview`, `gemini-3-flash-preview`) use `thinkingLevel` (string: `'low'`, `'medium'`, `'high'`).
-*   **Gemini 2.5 models** use `thinkingBudget` (number).
+- **Gemini 3 models** (`gemini-3-pro-preview`, `gemini-3-flash-preview`) use `thinkingLevel` (string: `'low'`, `'high'`).
+- **Gemini 2.5 models** use `thinkingBudget` (number).
 
 The plugin passes these values through to the API as configured.
 
@@ -68,7 +68,7 @@ The plugin passes these values through to the API as configured.
         "gemini-3-flash-preview": {
           "options": {
             "thinkingConfig": {
-              "thinkingLevel": "medium",
+              "thinkingLevel": "low",
               "includeThoughts": true
             }
           }
