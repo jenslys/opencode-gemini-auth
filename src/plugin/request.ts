@@ -19,7 +19,7 @@ const MODEL_FALLBACKS: Record<string, string> = {
  * @returns True when the URL targets generativelanguage.googleapis.com.
  */
 export function isGenerativeLanguageRequest(input: RequestInfo): input is string {
-  return typeof input === "string" && input.includes("generativelanguage.googleapis.com");
+  return toRequestUrlString(input).includes("generativelanguage.googleapis.com");
 }
 
 /**
@@ -124,7 +124,7 @@ export function prepareGeminiRequest(
   headers.set("Authorization", `Bearer ${accessToken}`);
   headers.delete("x-api-key");
 
-  const match = input.match(/\/models\/([^:]+):(\w+)/);
+  const match = toRequestUrlString(input).match(/\/models\/([^:]+):(\w+)/);
   if (!match) {
     return {
       request: input,
@@ -188,7 +188,6 @@ export function prepareGeminiRequest(
         }
 
         delete requestPayload.cached_content;
-        delete requestPayload.cachedContent;
         if (requestPayload.extra_body && typeof requestPayload.extra_body === "object") {
           delete (requestPayload.extra_body as Record<string, unknown>).cached_content;
           delete (requestPayload.extra_body as Record<string, unknown>).cachedContent;
@@ -232,6 +231,20 @@ export function prepareGeminiRequest(
     streaming,
     requestedModel: rawModel,
   };
+}
+
+function toRequestUrlString(value: RequestInfo): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (value instanceof URL) {
+    return value.toString();
+  }
+  const candidate = (value as Request).url;
+  if (candidate) {
+    return candidate;
+  }
+  return value.toString();
 }
 
 /**
