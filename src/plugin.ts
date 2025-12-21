@@ -254,9 +254,13 @@ function openBrowserUrl(url: string): void {
     // Best-effort: don't block auth flow if spawning fails.
     const platform = process.platform;
     const command =
-      platform === "darwin" ? "open" : platform === "win32" ? "cmd" : "xdg-open";
+      platform === "darwin"
+        ? "open"
+        : platform === "win32"
+          ? "rundll32"
+          : "xdg-open";
     const args =
-      platform === "win32" ? ["/c", "start", "", url] : [url];
+      platform === "win32" ? ["url.dll,FileProtocolHandler", url] : [url];
     const child = spawn(command, args, {
       stdio: "ignore",
       detached: true,
