@@ -1,7 +1,6 @@
 import { CODE_ASSIST_HEADERS, GEMINI_CODE_ASSIST_ENDPOINT } from "../constants";
 import { logGeminiDebugResponse, type GeminiDebugContext } from "./debug";
 import {
-  extractUsageFromSsePayload,
   extractUsageMetadata,
   normalizeThinkingConfig,
   parseGeminiApiBody,
@@ -24,28 +23,81 @@ export function isGenerativeLanguageRequest(input: RequestInfo): input is string
 }
 
 /**
- * Rewrites SSE payloads so downstream consumers see only the inner `response` objects.
+ * Rewrites SSE payload lines so downstream consumers see only the inner `response` objects.
  */
-function transformStreamingPayload(payload: string): string {
-  return payload
-    .split("\n")
-    .map((line) => {
-      if (!line.startsWith("data:")) {
-        return line;
+function transformStreamingLine(line: string): string {
+  if (!line.startsWith("data:")) {
+    return line;
+  }
+  const json = line.slice(5).trim();
+  if (!json) {
+    return line;
+  }
+  try {
+    const parsed = JSON.parse(json) as { response?: unknown };
+    if (parsed.response !== undefined) {
+      return `data: ${JSON.stringify(parsed.response)}`;
+    }
+  } catch (_) {}
+  return line;
+}
+
+/**
+ * Streams SSE payloads, rewriting data lines on the fly.
+ */
+function transformStreamingPayloadStream(
+  stream: ReadableStream<Uint8Array>,
+): ReadableStream<Uint8Array> {
+  const decoder = new TextDecoder();
+  const encoder = new TextEncoder();
+  let buffer = "";
+  let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      reader = stream.getReader();
+      const pump = (): void => {
+        reader!
+          .read()
+          .then(({ done, value }) => {
+            if (done) {
+              buffer += decoder.decode();
+              if (buffer.length > 0) {
+                controller.enqueue(encoder.encode(transformStreamingLine(buffer)));
+              }
+              controller.close();
+              return;
+            }
+
+            buffer += decoder.decode(value, { stream: true });
+
+            let newlineIndex = buffer.indexOf("\n");
+            while (newlineIndex !== -1) {
+              const line = buffer.slice(0, newlineIndex);
+              buffer = buffer.slice(newlineIndex + 1);
+              const hasCarriageReturn = line.endsWith("\r");
+              const rawLine = hasCarriageReturn ? line.slice(0, -1) : line;
+              const transformed = transformStreamingLine(rawLine);
+              const suffix = hasCarriageReturn ? "\r\n" : "\n";
+              controller.enqueue(encoder.encode(`${transformed}${suffix}`));
+              newlineIndex = buffer.indexOf("\n");
+            }
+
+            pump();
+          })
+          .catch((error) => {
+            controller.error(error);
+          });
+      };
+
+      pump();
+    },
+    cancel(reason) {
+      if (reader) {
+        reader.cancel(reason).catch(() => {});
       }
-      const json = line.slice(5).trim();
-      if (!json) {
-        return line;
-      }
-      try {
-        const parsed = JSON.parse(json) as { response?: unknown };
-        if (parsed.response !== undefined) {
-          return `data: ${JSON.stringify(parsed.response)}`;
-        }
-      } catch (_) {}
-      return line;
-    })
-    .join("\n");
+    },
+  });
 }
 
 /**
@@ -184,7 +236,7 @@ export function prepareGeminiRequest(
 
 /**
  * Normalizes Gemini responses: applies retry headers, extracts cache usage into headers,
- * rewrites preview errors, flattens streaming payloads, and logs debug metadata.
+ * rewrites preview errors, rewrites streaming payloads, and logs debug metadata.
  */
 export async function transformGeminiResponse(
   response: Response,
@@ -204,8 +256,22 @@ export async function transformGeminiResponse(
   }
 
   try {
-    const text = await response.text();
     const headers = new Headers(response.headers);
+
+    if (streaming && response.ok && isEventStreamResponse && response.body) {
+      logGeminiDebugResponse(debugContext, response, {
+        note: "Streaming SSE payload (body omitted)",
+        headersOverride: headers,
+      });
+
+      return new Response(transformStreamingPayloadStream(response.body), {
+        status: response.status,
+        statusText: response.statusText,
+        headers,
+      });
+    }
+
+    const text = await response.text();
     
     if (!response.ok && text) {
       try {
@@ -238,12 +304,11 @@ export async function transformGeminiResponse(
       headers,
     };
 
-    const usageFromSse = streaming && isEventStreamResponse ? extractUsageFromSsePayload(text) : null;
     const parsed: GeminiApiBody | null = !streaming || !isEventStreamResponse ? parseGeminiApiBody(text) : null;
     const patched = parsed ? rewriteGeminiPreviewAccessError(parsed, response.status, requestedModel) : null;
     const effectiveBody = patched ?? parsed ?? undefined;
 
-    const usage = usageFromSse ?? (effectiveBody ? extractUsageMetadata(effectiveBody) : null);
+    const usage = effectiveBody ? extractUsageMetadata(effectiveBody) : null;
     if (usage?.cachedContentTokenCount !== undefined) {
       headers.set("x-gemini-cached-content-token-count", String(usage.cachedContentTokenCount));
       if (usage.totalTokenCount !== undefined) {
@@ -259,13 +324,9 @@ export async function transformGeminiResponse(
 
     logGeminiDebugResponse(debugContext, response, {
       body: text,
-      note: streaming ? "Streaming SSE payload" : undefined,
+      note: streaming ? "Streaming SSE payload (buffered)" : undefined,
       headersOverride: headers,
     });
-
-    if (streaming && response.ok && isEventStreamResponse) {
-      return new Response(transformStreamingPayload(text), init);
-    }
 
     if (!parsed) {
       return new Response(text, init);

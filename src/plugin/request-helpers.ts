@@ -121,34 +121,6 @@ export function extractUsageMetadata(body: GeminiApiBody): GeminiUsageMetadata |
 }
 
 /**
- * Walks SSE lines to find a usage-bearing response chunk.
- */
-export function extractUsageFromSsePayload(payload: string): GeminiUsageMetadata | null {
-  const lines = payload.split("\n");
-  for (const line of lines) {
-    if (!line.startsWith("data:")) {
-      continue;
-    }
-    const jsonText = line.slice(5).trim();
-    if (!jsonText) {
-      continue;
-    }
-    try {
-      const parsed = JSON.parse(jsonText);
-      if (parsed && typeof parsed === "object") {
-        const usage = extractUsageMetadata({ response: (parsed as Record<string, unknown>).response });
-        if (usage) {
-          return usage;
-        }
-      }
-    } catch {
-      continue;
-    }
-  }
-  return null;
-}
-
-/**
  * Enhances 404 errors for Gemini 3 models with a direct preview-access message.
  */
 export function rewriteGeminiPreviewAccessError(
