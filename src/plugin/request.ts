@@ -71,6 +71,8 @@ function transformStreamingPayloadStream(
 
             buffer += decoder.decode(value, { stream: true });
 
+            // Process ALL complete lines currently in buffer
+            // This ensures we don't lose lines when they arrive close together
             let newlineIndex = buffer.indexOf("\n");
             while (newlineIndex !== -1) {
               const line = buffer.slice(0, newlineIndex);
