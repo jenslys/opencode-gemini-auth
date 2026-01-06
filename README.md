@@ -37,7 +37,7 @@ Add the plugin to your Opencode configuration file
    - A browser window will open for you to approve the access.
    - The plugin spins up a temporary local server to capture the callback.
    - If the local server fails (e.g., port in use or headless environment),
-     you can manually copy/paste the callback URL as instructed.
+     you can manually paste the callback URL or just the authorization code.
 
 Once authenticated, Opencode will use your Google account for Gemini requests.
 

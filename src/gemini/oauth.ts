@@ -107,57 +107,81 @@ export async function exchangeGemini(
   try {
     const { verifier } = decodeState(state);
 
-    const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
-      body: new URLSearchParams({
-        client_id: GEMINI_CLIENT_ID,
-        client_secret: GEMINI_CLIENT_SECRET,
-        code,
-        grant_type: "authorization_code",
-        redirect_uri: GEMINI_REDIRECT_URI,
-        code_verifier: verifier,
-      }),
-    });
-
-    if (!tokenResponse.ok) {
-      const errorText = await tokenResponse.text();
-      return { type: "failed", error: errorText };
-    }
-
-    const tokenPayload = (await tokenResponse.json()) as GeminiTokenResponse;
-
-    const userInfoResponse = await fetch(
-      "https://www.googleapis.com/oauth2/v1/userinfo?alt=json",
-      {
-        headers: {
-          Authorization: `Bearer ${tokenPayload.access_token}`,
-        },
-      },
-    );
-
-    const userInfo = userInfoResponse.ok
-      ? ((await userInfoResponse.json()) as GeminiUserInfo)
-      : {};
-
-    const refreshToken = tokenPayload.refresh_token;
-    if (!refreshToken) {
-      return { type: "failed", error: "Missing refresh token in response" };
-    }
-
-    return {
-      type: "success",
-      refresh: refreshToken,
-      access: tokenPayload.access_token,
-      expires: Date.now() + tokenPayload.expires_in * 1000,
-      email: userInfo.email,
-    };
+    return await exchangeGeminiWithVerifierInternal(code, verifier);
   } catch (error) {
     return {
       type: "failed",
       error: error instanceof Error ? error.message : "Unknown error",
     };
   }
+}
+
+/**
+ * Exchange an authorization code using a known PKCE verifier.
+ */
+export async function exchangeGeminiWithVerifier(
+  code: string,
+  verifier: string,
+): Promise<GeminiTokenExchangeResult> {
+  try {
+    return await exchangeGeminiWithVerifierInternal(code, verifier);
+  } catch (error) {
+    return {
+      type: "failed",
+      error: error instanceof Error ? error.message : "Unknown error",
+    };
+  }
+}
+
+async function exchangeGeminiWithVerifierInternal(
+  code: string,
+  verifier: string,
+): Promise<GeminiTokenExchangeResult> {
+  const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: new URLSearchParams({
+      client_id: GEMINI_CLIENT_ID,
+      client_secret: GEMINI_CLIENT_SECRET,
+      code,
+      grant_type: "authorization_code",
+      redirect_uri: GEMINI_REDIRECT_URI,
+      code_verifier: verifier,
+    }),
+  });
+
+  if (!tokenResponse.ok) {
+    const errorText = await tokenResponse.text();
+    return { type: "failed", error: errorText };
+  }
+
+  const tokenPayload = (await tokenResponse.json()) as GeminiTokenResponse;
+
+  const userInfoResponse = await fetch(
+    "https://www.googleapis.com/oauth2/v1/userinfo?alt=json",
+    {
+      headers: {
+        Authorization: `Bearer ${tokenPayload.access_token}`,
+      },
+    },
+  );
+
+  const userInfo = userInfoResponse.ok
+    ? ((await userInfoResponse.json()) as GeminiUserInfo)
+    : {};
+
+  const refreshToken = tokenPayload.refresh_token;
+  if (!refreshToken) {
+    return { type: "failed", error: "Missing refresh token in response" };
+  }
+
+  return {
+    type: "success",
+    refresh: refreshToken,
+    access: tokenPayload.access_token,
+    expires: Date.now() + tokenPayload.expires_in * 1000,
+    email: userInfo.email,
+  };
 }

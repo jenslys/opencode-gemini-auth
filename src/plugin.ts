@@ -1,7 +1,11 @@
 import { spawn } from "node:child_process";
 
 import { GEMINI_PROVIDER_ID, GEMINI_REDIRECT_URI } from "./constants";
-import { authorizeGemini, exchangeGemini } from "./gemini/oauth";
+import {
+  authorizeGemini,
+  exchangeGemini,
+  exchangeGeminiWithVerifier,
+} from "./gemini/oauth";
 import type { GeminiTokenExchangeResult } from "./gemini/oauth";
 import { accessTokenExpired, isOAuthAuth } from "./plugin/auth";
 import { ensureProjectContext } from "./plugin/project";
@@ -146,16 +150,18 @@ export const GeminiCLIOAuthPlugin = async (
             } catch (error) {
               if (error instanceof Error) {
                 console.log(
-                  `Warning: Couldn't start the local callback listener (${error.message}). You'll need to paste the callback URL.`,
+                  `Warning: Couldn't start the local callback listener (${error.message}). You'll need to paste the callback URL or authorization code.`,
                 );
               } else {
                 console.log(
-                  "Warning: Couldn't start the local callback listener. You'll need to paste the callback URL.",
+                  "Warning: Couldn't start the local callback listener. You'll need to paste the callback URL or authorization code.",
                 );
               }
             }
           } else {
-            console.log("Headless environment detected. You'll need to paste the callback URL.");
+            console.log(
+              "Headless environment detected. You'll need to paste the callback URL or authorization code.",
+            );
           }
 
           const authorization = await authorizeGemini();
@@ -201,22 +207,24 @@ export const GeminiCLIOAuthPlugin = async (
           return {
             url: authorization.url,
             instructions:
-              "Complete OAuth in your browser, then paste the full redirected URL (e.g., http://localhost:8085/oauth2callback?code=...&state=...)",
+              "Complete OAuth in your browser, then paste the full redirected URL (e.g., http://localhost:8085/oauth2callback?code=...&state=...) or just the authorization code.",
             method: "code",
             callback: async (callbackUrl: string): Promise<GeminiTokenExchangeResult> => {
               try {
-                const url = new URL(callbackUrl);
-                const code = url.searchParams.get("code");
-                const state = url.searchParams.get("state");
+                const { code, state } = parseOAuthCallbackInput(callbackUrl);
 
-                if (!code || !state) {
+                if (!code) {
                   return {
                     type: "failed",
-                    error: "Missing code or state in callback URL",
+                    error: "Missing authorization code in callback input",
                   };
                 }
 
-                return exchangeGemini(code, state);
+                if (state) {
+                  return exchangeGemini(code, state);
+                }
+
+                return exchangeGeminiWithVerifier(code, authorization.verifier);
               } catch (error) {
                 return {
                   type: "failed",
@@ -247,6 +255,37 @@ function toUrlString(value: RequestInfo): string {
     return candidate;
   }
   return value.toString();
+}
+
+function parseOAuthCallbackInput(input: string): { code?: string; state?: string } {
+  const trimmed = input.trim();
+  if (!trimmed) {
+    return {};
+  }
+
+  if (/^https?:\/\//i.test(trimmed)) {
+    try {
+      const url = new URL(trimmed);
+      return {
+        code: url.searchParams.get("code") || undefined,
+        state: url.searchParams.get("state") || undefined,
+      };
+    } catch {
+      return {};
+    }
+  }
+
+  const candidate = trimmed.startsWith("?") ? trimmed.slice(1) : trimmed;
+  if (candidate.includes("=")) {
+    const params = new URLSearchParams(candidate);
+    const code = params.get("code") || undefined;
+    const state = params.get("state") || undefined;
+    if (code || state) {
+      return { code, state };
+    }
+  }
+
+  return { code: trimmed };
 }
 
 function openBrowserUrl(url: string): void {
