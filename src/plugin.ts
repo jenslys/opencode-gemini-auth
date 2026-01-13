@@ -242,6 +242,44 @@ export const GeminiCLIOAuthPlugin = async (
       },
     ],
   },
+  event: async ({ event }) => {
+    if (event.type === "tui.command.execute" && event.properties?.command === "quota") {
+      try {
+        const auth = await client.auth.get?.({ path: { id: GEMINI_PROVIDER_ID } });
+        if (!auth || !isOAuthAuth(auth)) {
+          console.error("[Gemini Quota] Not authenticated with OAuth. Please run 'opencode auth login' first.");
+          return;
+        }
+
+        let authRecord = auth;
+        if (accessTokenExpired(authRecord)) {
+          const refreshed = await refreshAccessToken(authRecord, client);
+          if (!refreshed) {
+            console.error("[Gemini Quota] Failed to refresh access token.");
+            return;
+          }
+          authRecord = refreshed;
+        }
+
+        const accessToken = authRecord.access;
+        if (!accessToken) {
+          console.error("[Gemini Quota] No access token available.");
+          return;
+        }
+
+        const { retrieveUserQuota, formatQuotaResponse } = await import("./plugin/quota");
+        const quota = await retrieveUserQuota(accessToken);
+        const formatted = formatQuotaResponse(quota);
+        
+        console.log(formatted);
+      } catch (error) {
+        console.error(
+          "[Gemini Quota] Failed to retrieve quota:",
+          error instanceof Error ? error.message : "Unknown error",
+        );
+      }
+    }
+  },
 });
 
 export const GoogleOAuthPlugin = GeminiCLIOAuthPlugin;

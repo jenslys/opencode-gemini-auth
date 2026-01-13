@@ -49,6 +49,7 @@ export interface AuthMethod {
 export interface PluginClient {
   auth: {
     set(input: { path: { id: string }; body: OAuthAuthDetails }): Promise<void>;
+    get?(input: { path: { id: string } }): Promise<AuthDetails | null>;
   };
 }
 
@@ -62,6 +63,7 @@ export interface PluginResult {
     loader: (getAuth: GetAuth, provider: Provider) => Promise<LoaderResult | null>;
     methods: AuthMethod[];
   };
+  event?: (context: { event: { type: string; properties?: Record<string, unknown> } }) => Promise<void>;
 }
 
 export interface RefreshParts {
