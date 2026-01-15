@@ -15,7 +15,7 @@ directly within Opencode, bypassing separate API billing.
 ## Installation
 
 Add the plugin to your Opencode configuration file
-(`~/.config/opencode/config.json` or similar):
+(`~/.config/opencode/opencode.json` or similar):
 
 ```json
 {
@@ -63,7 +63,7 @@ project. To force a specific project, set the `projectId` in your configuration:
 ### Thinking Models
 
 Configure "thinking" capabilities for Gemini models using the `thinkingConfig`
-option in your `config.json`.
+option in your `opencode.json`.
 
 **Gemini 3 (Thinking Level)**
 Use `thinkingLevel` (`"low"`, `"high"`) for Gemini 3 models.
