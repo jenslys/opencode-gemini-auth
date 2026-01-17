@@ -1,72 +1,87 @@
-# Gemini OAuth Plugin for Opencode
+# Gemini OAuth Plugin for Opencode (with Account Swap)
 
-![License](https://img.shields.io/npm/l/opencode-gemini-auth)
-![Version](https://img.shields.io/npm/v/opencode-gemini-auth)
+![License](https://img.shields.io/npm/l/opencode-gemini-auth-swap)
 
-**Authenticate the Opencode CLI with your Google account.** This plugin enables
-you to use your existing Gemini plan and quotas (including the free tier)
-directly within Opencode, bypassing separate API billing.
+**Authenticate the Opencode CLI with your Google account + easily swap between multiple accounts.**
 
-## Prerequisites
+This is a professional-grade fork of [opencode-gemini-auth](https://github.com/jenslys/opencode-gemini-auth) that adds robust multi-account profile management. Use your existing Gemini plan and quotas (including the free tier) directly within Opencode, and switch between different Google accounts/projects with a single command.
 
-- [Opencode CLI](https://opencode.ai) installed.
-- A Google account with access to Gemini.
+## Key Features
+
+- **Multi-Account Support**: Save and switch between an unlimited number of Google accounts.
+- **Project Isolation**: Bind specific Google Cloud Project IDs to individual profiles.
+- **Smart Account Management**: Automatically handles account rotation and ensures the active account is correctly prioritized for the Opencode agent.
+- **Thinking Model Support**: Full configuration support for Gemini 2.5 and 3 "thinking" models.
+- **Headless Friendly**: Fallback authentication methods for remote/SSH environments.
 
 ## Installation
 
-Add the plugin to your Opencode configuration file
-(`~/.config/opencode/opencode.json` or similar):
+### 1. Configure Opencode
+Add the plugin to your Opencode configuration file (`~/.config/opencode/config.json`):
 
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugin": ["opencode-gemini-auth@latest"]
+  "plugin": ["opencode-gemini-auth-swap@latest"]
 }
 ```
 
-## Usage
+### 2. Install the Swap CLI
+Install the management tool globally to enable easy profile switching:
 
-1. **Login**: Run the authentication command in your terminal:
+```bash
+# Using Bun (Recommended)
+bun install -g opencode-gemini-auth-swap
 
+# Or using NPM
+npm install -g opencode-gemini-auth-swap
+```
+
+## Setup & Account Swapping
+
+### The Workflow
+
+1. **Login with Account A**:
+   ```bash
+   opencode auth login
+   # Choose Google > OAuth with Google (Gemini CLI)
+   ```
+
+2. **Save as Profile**:
+   ```bash
+   gemini-swap save work my-work-project-id
+   ```
+
+3. **Login with Account B**:
    ```bash
    opencode auth login
    ```
 
-2. **Select Provider**: Choose **Google** from the list.
-3. **Authenticate**: Select **OAuth with Google (Gemini CLI)**.
-   - A browser window will open for you to approve the access.
-   - The plugin spins up a temporary local server to capture the callback.
-   - If the local server fails (e.g., port in use or headless environment),
-     you can manually paste the callback URL or just the authorization code.
+4. **Save as another Profile**:
+   ```bash
+   gemini-swap save personal my-personal-project-id
+   ```
 
-Once authenticated, Opencode will use your Google account for Gemini requests.
+5. **Switch anytime**:
+   ```bash
+   gemini-swap use work
+   # Your Opencode agent now uses the 'work' credentials and project.
+   ```
 
-## Configuration
+### CLI Reference
 
-### Google Cloud Project
+| Command | Description |
+| --- | --- |
+| `gemini-swap list` | List all saved profiles and show which one is active. |
+| `gemini-swap use <name>` | Switch to a saved profile (updates tokens and project ID). |
+| `gemini-swap save <name> [projectId]` | Save current session as a named profile. |
+| `gemini-swap current` | Display the active profile and current token/project details. |
+| `gemini-swap delete <name>` | Remove a saved profile. |
 
-By default, the plugin attempts to provision or find a suitable Google Cloud
-project. To force a specific project, set the `projectId` in your configuration:
-
-```json
-{
-  "provider": {
-    "google": {
-      "options": {
-        "projectId": "your-specific-project-id"
-      }
-    }
-  }
-}
-```
+## Model Configuration
 
 ### Thinking Models
-
-Configure "thinking" capabilities for Gemini models using the `thinkingConfig`
-option in your `opencode.json`.
-
-**Gemini 3 (Thinking Level)**
-Use `thinkingLevel` (`"low"`, `"high"`) for Gemini 3 models.
+You can configure "thinking" budgets and levels in your `config.json`:
 
 ```json
 {
@@ -80,21 +95,7 @@ Use `thinkingLevel` (`"low"`, `"high"`) for Gemini 3 models.
               "includeThoughts": true
             }
           }
-        }
-      }
-    }
-  }
-}
-```
-
-**Gemini 2.5 (Thinking Budget)**
-Use `thinkingBudget` (token count) for Gemini 2.5 models.
-
-```json
-{
-  "provider": {
-    "google": {
-      "models": {
+        },
         "gemini-2.5-flash": {
           "options": {
             "thinkingConfig": {
@@ -111,63 +112,30 @@ Use `thinkingBudget` (token count) for Gemini 2.5 models.
 
 ## Troubleshooting
 
+### Changes not taking effect?
+The Opencode agent often caches credentials in memory. If you switch profiles and don't see the change in your agent's behavior:
+1.  Close your current Opencode session.
+2.  Restart the agent (or your editor/terminal if integrated).
+
 ### Manual Google Cloud Setup
-
-If automatic provisioning fails, you may need to set up the project manually:
-
-1. Go to the [Google Cloud Console](https://console.cloud.google.com/).
-2. Create or select a project.
-3. Enable the **Gemini for Google Cloud API**
-   (`cloudaicompanion.googleapis.com`).
-4. Configure the `projectId` in your Opencode config as shown above.
-
-### Debugging
-
-To view detailed logs of Gemini requests and responses, set the
-`OPENCODE_GEMINI_DEBUG` environment variable:
-
-```bash
-OPENCODE_GEMINI_DEBUG=1 opencode
-```
-
-This will generate `gemini-debug-<timestamp>.log` files in your working
-directory containing sanitized request/response details.
-
-### Updating
-
-Opencode does not automatically update plugins. To update to the latest version,
-you must clear the cached plugin:
-
-```bash
-# Clear the specific plugin cache
-rm -rf ~/.cache/opencode/node_modules/opencode-gemini-auth
-
-# Run Opencode to trigger a fresh install
-opencode
-```
+If automatic provisioning fails:
+1.  Go to the [Google Cloud Console](https://console.cloud.google.com/).
+2.  Enable the **Gemini for Google Cloud API** (`cloudaicompanion.googleapis.com`).
+3.  Ensure your `projectId` is correctly set in your profile via `gemini-swap save <name> <projectId>`.
 
 ## Development
 
-To develop on this plugin locally:
+```bash
+git clone https://github.com/h1n054ur/opencode-gemini-auth-swap.git
+cd opencode-gemini-auth-swap
+bun install
+bun test
+```
 
-1. **Clone**:
+## Credits
 
-   ```bash
-   git clone https://github.com/jenslys/opencode-gemini-auth.git
-   cd opencode-gemini-auth
-   bun install
-   ```
-
-2. **Link**:
-   Update your Opencode config to point to your local directory using a
-   `file://` URL:
-
-   ```json
-   {
-     "plugin": ["file:///absolute/path/to/opencode-gemini-auth"]
-   }
-   ```
+Original plugin by [jenslys](https://github.com/jenslys). Multi-account logic and CLI by [h1n054ur](https://github.com/h1n054ur).
 
 ## License
 
-MIT
+MIT - see [LICENSE](LICENSE)

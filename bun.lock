@@ -8,7 +8,7 @@
         "@openauthjs/openauth": "^0.4.3",
       },
       "devDependencies": {
-        "@opencode-ai/plugin": "^1.0.184",
+        "@opencode-ai/plugin": "^1.0.203",
         "@types/bun": "latest",
       },
       "peerDependencies": {
