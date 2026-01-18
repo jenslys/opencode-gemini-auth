@@ -126,7 +126,7 @@ export const GeminiCLIOAuthPlugin = async (
             projectId: projectContext.effectiveProjectId,
           });
 
-          const response = await fetch(request, transformedInit);
+          const response = await fetchWithRetry(request, transformedInit);
           return transformGeminiResponse(response, streaming, debugContext, requestedModel);
         },
       };
@@ -246,6 +246,11 @@ export const GeminiCLIOAuthPlugin = async (
 
 export const GoogleOAuthPlugin = GeminiCLIOAuthPlugin;
 
+const RETRYABLE_STATUS_CODES = new Set([429, 503]);
+const DEFAULT_MAX_RETRIES = 2;
+const DEFAULT_BASE_DELAY_MS = 800;
+const DEFAULT_MAX_DELAY_MS = 8000;
+
 function toUrlString(value: RequestInfo): string {
   if (typeof value === "string") {
     return value;
@@ -307,4 +312,199 @@ function openBrowserUrl(url: string): void {
     child.unref?.();
   } catch {
   }
+}
+
+async function fetchWithRetry(input: RequestInfo, init: RequestInit | undefined): Promise<Response> {
+  const maxRetries = DEFAULT_MAX_RETRIES;
+  const baseDelayMs = DEFAULT_BASE_DELAY_MS;
+  const maxDelayMs = DEFAULT_MAX_DELAY_MS;
+
+  if (!canRetryRequest(init)) {
+    return fetch(input, init);
+  }
+
+  let attempt = 0;
+  while (true) {
+    const response = await fetch(input, init);
+    if (!RETRYABLE_STATUS_CODES.has(response.status) || attempt >= maxRetries) {
+      return response;
+    }
+
+    const delayMs = await getRetryDelayMs(response, attempt, baseDelayMs, maxDelayMs);
+    if (!delayMs || delayMs <= 0) {
+      return response;
+    }
+
+    if (init?.signal?.aborted) {
+      return response;
+    }
+
+    await wait(delayMs);
+    attempt += 1;
+  }
+}
+
+function canRetryRequest(init: RequestInit | undefined): boolean {
+  if (!init?.body) {
+    return true;
+  }
+
+  const body = init.body;
+  if (typeof body === "string") {
+    return true;
+  }
+  if (typeof URLSearchParams !== "undefined" && body instanceof URLSearchParams) {
+    return true;
+  }
+  if (typeof ArrayBuffer !== "undefined" && body instanceof ArrayBuffer) {
+    return true;
+  }
+  if (typeof ArrayBuffer !== "undefined" && ArrayBuffer.isView(body)) {
+    return true;
+  }
+  if (typeof Blob !== "undefined" && body instanceof Blob) {
+    return true;
+  }
+
+  return false;
+}
+
+async function getRetryDelayMs(
+  response: Response,
+  attempt: number,
+  baseDelayMs: number,
+  maxDelayMs: number,
+): Promise<number | null> {
+  const headerDelayMs = parseRetryAfterMs(response.headers.get("retry-after-ms"));
+  if (headerDelayMs !== null) {
+    return clampDelay(headerDelayMs, maxDelayMs);
+  }
+
+  const retryAfter = parseRetryAfter(response.headers.get("retry-after"));
+  if (retryAfter !== null) {
+    return clampDelay(retryAfter, maxDelayMs);
+  }
+
+  const bodyDelayMs = await parseRetryDelayFromBody(response);
+  if (bodyDelayMs !== null) {
+    return clampDelay(bodyDelayMs, maxDelayMs);
+  }
+
+  const fallback = baseDelayMs * Math.pow(2, attempt);
+  return clampDelay(fallback, maxDelayMs);
+}
+
+function clampDelay(delayMs: number, maxDelayMs: number): number {
+  if (!Number.isFinite(delayMs)) {
+    return maxDelayMs;
+  }
+  return Math.min(Math.max(0, delayMs), maxDelayMs);
+}
+
+function parseRetryAfterMs(value: string | null): number | null {
+  if (!value) {
+    return null;
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return null;
+  }
+  return parsed;
+}
+
+function parseRetryAfter(value: string | null): number | null {
+  if (!value) {
+    return null;
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const asNumber = Number(trimmed);
+  if (Number.isFinite(asNumber)) {
+    return Math.max(0, Math.round(asNumber * 1000));
+  }
+  const asDate = Date.parse(trimmed);
+  if (!Number.isNaN(asDate)) {
+    return Math.max(0, asDate - Date.now());
+  }
+  return null;
+}
+
+async function parseRetryDelayFromBody(response: Response): Promise<number | null> {
+  let text = "";
+  try {
+    text = await response.clone().text();
+  } catch {
+    return null;
+  }
+
+  if (!text) {
+    return null;
+  }
+
+  let parsed: any;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return null;
+  }
+
+  const details = parsed?.error?.details;
+  if (!Array.isArray(details)) {
+    return null;
+  }
+
+  for (const detail of details) {
+    if (!detail || typeof detail !== "object") {
+      continue;
+    }
+    const retryDelay = (detail as Record<string, unknown>).retryDelay;
+    if (!retryDelay) {
+      continue;
+    }
+    const delayMs = parseRetryDelayValue(retryDelay);
+    if (delayMs !== null) {
+      return delayMs;
+    }
+  }
+
+  return null;
+}
+
+function parseRetryDelayValue(value: unknown): number | null {
+  if (!value) {
+    return null;
+  }
+
+  if (typeof value === "string") {
+    const match = value.match(/^([\d.]+)s$/);
+    if (!match || !match[1]) {
+      return null;
+    }
+    const seconds = Number(match[1]);
+    if (!Number.isFinite(seconds) || seconds <= 0) {
+      return null;
+    }
+    return Math.round(seconds * 1000);
+  }
+
+  if (typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    const seconds = typeof record.seconds === "number" ? record.seconds : 0;
+    const nanos = typeof record.nanos === "number" ? record.nanos : 0;
+    if (!Number.isFinite(seconds) || !Number.isFinite(nanos)) {
+      return null;
+    }
+    const totalMs = Math.round(seconds * 1000 + nanos / 1e6);
+    return totalMs > 0 ? totalMs : null;
+  }
+
+  return null;
+}
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }

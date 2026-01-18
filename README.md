@@ -60,19 +60,41 @@ project. To force a specific project, set the `projectId` in your configuration:
 }
 ```
 
-### Thinking Models
+### Model list
 
-Configure "thinking" capabilities for Gemini models using the `thinkingConfig`
-option in your `opencode.json`.
-
-**Gemini 3 (Thinking Level)**
-Use `thinkingLevel` (`"low"`, `"high"`) for Gemini 3 models.
+Below are example model entries you can add under `provider.google.models` in your
+Opencode config. Each model can include an `options.thinkingConfig` block to
+enable "thinking" features.
 
 ```json
 {
   "provider": {
     "google": {
       "models": {
+        "gemini-2.5-flash": {
+          "options": {
+            "thinkingConfig": {
+              "thinkingBudget": 8192,
+              "includeThoughts": true
+            }
+          }
+        },
+        "gemini-2.5-pro": {
+          "options": {
+            "thinkingConfig": {
+              "thinkingBudget": 8192,
+              "includeThoughts": true
+            }
+          }
+        },
+        "gemini-3-flash-preview": {
+          "options": {
+            "thinkingConfig": {
+              "thinkingLevel": "high",
+              "includeThoughts": true
+            }
+          }
+        },
         "gemini-3-pro-preview": {
           "options": {
             "thinkingConfig": {
@@ -87,14 +109,33 @@ Use `thinkingLevel` (`"low"`, `"high"`) for Gemini 3 models.
 }
 ```
 
-**Gemini 2.5 (Thinking Budget)**
-Use `thinkingBudget` (token count) for Gemini 2.5 models.
+Note: Available model names and previews may change—check Google's documentation or
+the Gemini product page for the current model identifiers.
+
+### Thinking Models
+
+The plugin supports configuring Gemini "thinking" features per-model via
+`thinkingConfig`. The available fields depend on the model family:
+
+- For Gemini 3 models: use `thinkingLevel` with values `"low"` or `"high"`.
+- For Gemini 2.5 models: use `thinkingBudget` (token count).
+- `includeThoughts` (boolean) controls whether the model emits internal thoughts.
+
+A combined example showing both model types:
 
 ```json
 {
   "provider": {
     "google": {
       "models": {
+        "gemini-3-pro-preview": {
+          "options": {
+            "thinkingConfig": {
+              "thinkingLevel": "high",
+              "includeThoughts": true
+            }
+          }
+        },
         "gemini-2.5-flash": {
           "options": {
             "thinkingConfig": {
@@ -108,6 +149,9 @@ Use `thinkingBudget` (token count) for Gemini 2.5 models.
   }
 }
 ```
+
+If you don't set a `thinkingConfig` for a model, the plugin will use default
+behavior for that model.
 
 ## Troubleshooting
 

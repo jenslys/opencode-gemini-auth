@@ -90,6 +90,8 @@ export async function authorizeGemini(): Promise<GeminiAuthorization> {
   url.searchParams.set("state", encodeState({ verifier: pkce.verifier }));
   url.searchParams.set("access_type", "offline");
   url.searchParams.set("prompt", "consent");
+  // Add a fragment so any stray terminal glyphs are ignored by the auth server.
+  url.hash = "opencode";
 
   return {
     url: url.toString(),
