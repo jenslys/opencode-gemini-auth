@@ -3,7 +3,6 @@ import { spawn } from "node:child_process";
 import { GEMINI_PROVIDER_ID, GEMINI_REDIRECT_URI } from "./constants";
 import {
   authorizeGemini,
-  exchangeGemini,
   exchangeGeminiWithVerifier,
 } from "./gemini/oauth";
 import type { GeminiTokenExchangeResult } from "./gemini/oauth";
@@ -188,7 +187,14 @@ export const GeminiCLIOAuthPlugin = async (
                     };
                   }
 
-                  return await exchangeGemini(code, state);
+                  if (state !== authorization.state) {
+                    return {
+                      type: "failed",
+                      error: "State mismatch in callback URL (possible CSRF attempt)",
+                    };
+                  }
+
+                  return await exchangeGeminiWithVerifier(code, authorization.verifier);
                 } catch (error) {
                   return {
                     type: "failed",
@@ -220,8 +226,11 @@ export const GeminiCLIOAuthPlugin = async (
                   };
                 }
 
-                if (state) {
-                  return exchangeGemini(code, state);
+                if (state && state !== authorization.state) {
+                  return {
+                    type: "failed",
+                    error: "State mismatch in callback input (possible CSRF attempt)",
+                  };
                 }
 
                 return exchangeGeminiWithVerifier(code, authorization.verifier);
