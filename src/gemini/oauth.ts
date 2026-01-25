@@ -1,4 +1,5 @@
 import { generatePKCE } from "@openauthjs/openauth/pkce";
+import { randomBytes } from "node:crypto";
 
 import {
   GEMINI_CLIENT_ID,
@@ -12,16 +13,13 @@ interface PkcePair {
   verifier: string;
 }
 
-interface GeminiAuthState {
-  verifier: string;
-}
-
 /**
  * Result returned to the caller after constructing an OAuth authorization URL.
  */
 export interface GeminiAuthorization {
   url: string;
   verifier: string;
+  state: string;
 }
 
 interface GeminiTokenExchangeSuccess {
@@ -52,33 +50,11 @@ interface GeminiUserInfo {
 }
 
 /**
- * Encode an object into a URL-safe base64 string.
- */
-function encodeState(payload: GeminiAuthState): string {
-  return Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
-}
-
-/**
- * Decode an OAuth state parameter back into its structured representation.
- */
-function decodeState(state: string): GeminiAuthState {
-  const normalized = state.replace(/-/g, "+").replace(/_/g, "/");
-  const padded = normalized.padEnd(normalized.length + ((4 - normalized.length % 4) % 4), "=");
-  const json = Buffer.from(padded, "base64").toString("utf8");
-  const parsed = JSON.parse(json);
-  if (typeof parsed.verifier !== "string") {
-    throw new Error("Missing PKCE verifier in state");
-  }
-  return {
-    verifier: parsed.verifier,
-  };
-}
-
-/**
  * Build the Gemini OAuth authorization URL including PKCE.
  */
 export async function authorizeGemini(): Promise<GeminiAuthorization> {
   const pkce = (await generatePKCE()) as PkcePair;
+  const state = randomBytes(32).toString("hex");
 
   const url = new URL("https://accounts.google.com/o/oauth2/v2/auth");
   url.searchParams.set("client_id", GEMINI_CLIENT_ID);
@@ -87,7 +63,7 @@ export async function authorizeGemini(): Promise<GeminiAuthorization> {
   url.searchParams.set("scope", GEMINI_SCOPES.join(" "));
   url.searchParams.set("code_challenge", pkce.challenge);
   url.searchParams.set("code_challenge_method", "S256");
-  url.searchParams.set("state", encodeState({ verifier: pkce.verifier }));
+  url.searchParams.set("state", state);
   url.searchParams.set("access_type", "offline");
   url.searchParams.set("prompt", "consent");
   // Add a fragment so any stray terminal glyphs are ignored by the auth server.
@@ -96,26 +72,8 @@ export async function authorizeGemini(): Promise<GeminiAuthorization> {
   return {
     url: url.toString(),
     verifier: pkce.verifier,
+    state,
   };
-}
-
-/**
- * Exchange an authorization code for Gemini CLI access and refresh tokens.
- */
-export async function exchangeGemini(
-  code: string,
-  state: string,
-): Promise<GeminiTokenExchangeResult> {
-  try {
-    const { verifier } = decodeState(state);
-
-    return await exchangeGeminiWithVerifierInternal(code, verifier);
-  } catch (error) {
-    return {
-      type: "failed",
-      error: error instanceof Error ? error.message : "Unknown error",
-    };
-  }
 }
 
 /**
