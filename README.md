@@ -23,6 +23,10 @@ Add the plugin to your Opencode configuration file
   "plugin": ["opencode-gemini-auth@latest"]
 }
 ```
+> [!IMPORTANT]
+> You probably need to explicitly configure a Google Cloud
+> `projectId` after installation. See **Configuration → Google Cloud Project**
+> below.
 
 ## Usage
 
@@ -48,6 +52,7 @@ Once authenticated, Opencode will use your Google account for Gemini requests.
 By default, the plugin attempts to provision or find a suitable Google Cloud
 project. To force a specific project, set the `projectId` in your configuration:
 
+**File:** `~/.config/opencode/opencode.json`
 ```json
 {
   "provider": {
