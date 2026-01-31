@@ -177,6 +177,20 @@ If automatic provisioning fails, you may need to set up the project manually:
    (`cloudaicompanion.googleapis.com`).
 4. Configure the `projectId` in your Opencode config as shown above.
 
+### Quotas, Plans, and 429 Errors
+
+Common causes of `429 RESOURCE_EXHAUSTED` or `QUOTA_EXHAUSTED`:
+
+- **No project ID configured**: the plugin uses a managed free-tier project, which has lower quotas.
+- **Model-specific limits**: quotas are tracked per model (e.g., `gemini-3-pro-preview` vs `gemini-3-flash-preview`).
+- **Large prompts**: OAuth/Code Assist does not support cached content, so long system prompts and history can burn quota quickly.
+- **Parallel sessions**: multiple Opencode windows can drain the same bucket.
+
+Notes:
+
+- **Gemini CLI auto-fallbacks**: the official CLI may fall back to Flash when Pro quotas are exhausted, so it can appear to “work” even if the Pro bucket is depleted.
+- **Paid plans still require a project**: to use paid quotas in Opencode, set `provider.google.options.projectId` (or `OPENCODE_GEMINI_PROJECT_ID`) and re-authenticate.
+
 ### Debugging
 
 To view detailed logs of Gemini requests and responses, set the
