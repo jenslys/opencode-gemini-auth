@@ -11,7 +11,7 @@
   "license": "MIT",
   "type": "module",
   "devDependencies": {
-    "@opencode-ai/plugin": "^1.1.25",
+    "@opencode-ai/plugin": "^1.1.48",
     "@types/bun": "latest"
   },
   "peerDependencies": {
