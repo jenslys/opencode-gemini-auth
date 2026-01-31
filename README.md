@@ -189,6 +189,17 @@ OPENCODE_GEMINI_DEBUG=1 opencode
 This will generate `gemini-debug-<timestamp>.log` files in your working
 directory containing sanitized request/response details.
 
+## Parity Notes
+
+This plugin mirrors the official Gemini CLI OAuth flow and Code Assist
+endpoints. In particular, project onboarding and quota retry handling follow
+the same behavior patterns as the Gemini CLI.
+
+### References
+
+- Gemini CLI repository: https://github.com/google-gemini/gemini-cli
+- Gemini CLI quota documentation: https://developers.google.com/gemini-code-assist/resources/quotas
+
 ### Updating
 
 Opencode does not automatically update plugins. To update to the latest version,

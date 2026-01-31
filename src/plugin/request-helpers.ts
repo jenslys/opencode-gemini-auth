@@ -191,6 +191,10 @@ export function rewriteGeminiPreviewAccessError(
 /**
  * Enhances Gemini error responses with friendly messages and retry hints.
  */
+/**
+ * Enhances Gemini errors with validation/quota messaging and retry hints.
+ * Keeps messaging aligned with Gemini CLI's Cloud Code error handling.
+ */
 export function enhanceGeminiErrorResponse(
   body: GeminiApiBody,
   status: number,
@@ -277,6 +281,9 @@ function isGeminiThreeModel(target?: string): boolean {
   return /gemini[\s-]?3/i.test(target);
 }
 
+/**
+ * Extracts validation URLs when the backend requires account verification.
+ */
 function extractValidationInfo(details: unknown[]): { link?: string; learnMore?: string } | null {
   const errorInfo = details.find(
     (detail): detail is GoogleRpcErrorInfo =>
@@ -328,6 +335,9 @@ function extractValidationInfo(details: unknown[]): { link?: string; learnMore?:
   return link || learnMore ? { link, learnMore } : null;
 }
 
+/**
+ * Classifies quota-related error details as retryable or terminal.
+ */
 function extractQuotaInfo(details: unknown[]): { retryable: boolean } | null {
   const errorInfo = details.find(
     (detail): detail is GoogleRpcErrorInfo =>
@@ -363,6 +373,9 @@ function extractQuotaInfo(details: unknown[]): { retryable: boolean } | null {
   return null;
 }
 
+/**
+ * Extracts retry delay hints from structured error details or message text.
+ */
 function extractRetryDelay(details: unknown[], errorMessage?: string): number | null {
   const retryInfo = details.find(
     (detail): detail is GoogleRpcRetryInfo =>
@@ -392,6 +405,9 @@ function extractRetryDelay(details: unknown[], errorMessage?: string): number | 
   return null;
 }
 
+/**
+ * Parses retry delay values from strings or protobuf-style objects.
+ */
 function parseRetryDelayValue(value: string | { seconds?: number; nanos?: number }): number | null {
   if (!value) {
     return null;

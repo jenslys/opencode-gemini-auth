@@ -323,6 +323,11 @@ const RETRYABLE_STATUS_CODES = new Set([429, 503]);
 const DEFAULT_MAX_RETRIES = 2;
 const DEFAULT_BASE_DELAY_MS = 800;
 const DEFAULT_MAX_DELAY_MS = 8000;
+const CLOUDCODE_DOMAINS = [
+  "cloudcode-pa.googleapis.com",
+  "staging-cloudcode-pa.googleapis.com",
+  "autopush-cloudcode-pa.googleapis.com",
+];
 
 function toUrlString(value: RequestInfo): string {
   if (typeof value === "string") {
@@ -387,6 +392,10 @@ function openBrowserUrl(url: string): void {
   }
 }
 
+/**
+ * Sends requests with bounded retry logic for transient Cloud Code failures.
+ * Mirrors the Gemini CLI handling of Code Assist rate-limit signals.
+ */
 async function fetchWithRetry(input: RequestInfo, init: RequestInit | undefined): Promise<Response> {
   const maxRetries = DEFAULT_MAX_RETRIES;
   const baseDelayMs = DEFAULT_BASE_DELAY_MS;
@@ -403,7 +412,22 @@ async function fetchWithRetry(input: RequestInfo, init: RequestInit | undefined)
       return response;
     }
 
-    const delayMs = await getRetryDelayMs(response, attempt, baseDelayMs, maxDelayMs);
+    let retryDelayMs: number | null = null;
+    if (response.status === 429) {
+      const quotaContext = await classifyQuotaResponse(response);
+      if (quotaContext?.terminal) {
+        return response;
+      }
+      retryDelayMs = quotaContext?.retryDelayMs ?? null;
+    }
+
+    const delayMs = await getRetryDelayMs(
+      response,
+      attempt,
+      baseDelayMs,
+      maxDelayMs,
+      retryDelayMs,
+    );
     if (!delayMs || delayMs <= 0) {
       return response;
     }
@@ -442,11 +466,16 @@ function canRetryRequest(init: RequestInit | undefined): boolean {
   return false;
 }
 
+/**
+ * Resolves a retry delay from headers, body hints, or exponential backoff.
+ * Honors RetryInfo/Retry-After hints emitted by Code Assist.
+ */
 async function getRetryDelayMs(
   response: Response,
   attempt: number,
   baseDelayMs: number,
   maxDelayMs: number,
+  bodyDelayMs: number | null = null,
 ): Promise<number | null> {
   const headerDelayMs = parseRetryAfterMs(response.headers.get("retry-after-ms"));
   if (headerDelayMs !== null) {
@@ -458,9 +487,9 @@ async function getRetryDelayMs(
     return clampDelay(retryAfter, maxDelayMs);
   }
 
-  const bodyDelayMs = await parseRetryDelayFromBody(response);
-  if (bodyDelayMs !== null) {
-    return clampDelay(bodyDelayMs, maxDelayMs);
+  const parsedBodyDelayMs = bodyDelayMs ?? (await parseRetryDelayFromBody(response));
+  if (parsedBodyDelayMs !== null) {
+    return clampDelay(parsedBodyDelayMs, maxDelayMs);
   }
 
   const fallback = baseDelayMs * Math.pow(2, attempt);
@@ -525,7 +554,8 @@ async function parseRetryDelayFromBody(response: Response): Promise<number | nul
 
   const details = parsed?.error?.details;
   if (!Array.isArray(details)) {
-    return null;
+    const message = typeof parsed?.error?.message === "string" ? parsed.error.message : "";
+    return parseRetryDelayFromMessage(message);
   }
 
   for (const detail of details) {
@@ -542,7 +572,8 @@ async function parseRetryDelayFromBody(response: Response): Promise<number | nul
     }
   }
 
-  return null;
+  const message = typeof parsed?.error?.message === "string" ? parsed.error.message : "";
+  return parseRetryDelayFromMessage(message);
 }
 
 function parseRetryDelayValue(value: unknown): number | null {
@@ -574,6 +605,91 @@ function parseRetryDelayValue(value: unknown): number | null {
   }
 
   return null;
+}
+
+/**
+ * Parses retry delays embedded in error message strings (e.g., "Please retry in 5s").
+ */
+function parseRetryDelayFromMessage(message: string): number | null {
+  if (!message) {
+    return null;
+  }
+  const retryMatch = message.match(/Please retry in ([0-9.]+(?:ms|s))/);
+  if (retryMatch?.[1]) {
+    return parseRetryDelayValue(retryMatch[1]);
+  }
+  const afterMatch = message.match(/after\s+([0-9.]+(?:ms|s))/i);
+  if (afterMatch?.[1]) {
+    return parseRetryDelayValue(afterMatch[1]);
+  }
+  return null;
+}
+
+/**
+ * Classifies quota errors as terminal vs retryable and extracts retry hints.
+ * Matches Gemini CLI semantics: QUOTA_EXHAUSTED is terminal, RATE_LIMIT_EXCEEDED is retryable.
+ */
+async function classifyQuotaResponse(
+  response: Response,
+): Promise<{ terminal: boolean; retryDelayMs?: number } | null> {
+  let text = "";
+  try {
+    text = await response.clone().text();
+  } catch {
+    return null;
+  }
+
+  if (!text) {
+    return null;
+  }
+
+  let parsed: any;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return null;
+  }
+
+  const error = parsed?.error ?? {};
+  const details = Array.isArray(error?.details) ? error.details : [];
+  const retryDelayMs = parseRetryDelayFromMessage(error?.message ?? "") ?? undefined;
+
+  const errorInfo = details.find(
+    (detail: any) =>
+      detail &&
+      typeof detail === "object" &&
+      detail["@type"] === "type.googleapis.com/google.rpc.ErrorInfo",
+  );
+
+  if (errorInfo?.domain && !CLOUDCODE_DOMAINS.includes(errorInfo.domain)) {
+    return null;
+  }
+
+  if (errorInfo?.reason === "QUOTA_EXHAUSTED") {
+    return { terminal: true, retryDelayMs };
+  }
+  if (errorInfo?.reason === "RATE_LIMIT_EXCEEDED") {
+    return { terminal: false, retryDelayMs };
+  }
+
+  const quotaFailure = details.find(
+    (detail: any) =>
+      detail &&
+      typeof detail === "object" &&
+      detail["@type"] === "type.googleapis.com/google.rpc.QuotaFailure",
+  );
+
+  if (quotaFailure?.violations && Array.isArray(quotaFailure.violations)) {
+    const combined = quotaFailure.violations
+      .map((violation: any) => String(violation?.description ?? "").toLowerCase())
+      .join(" ");
+    if (combined.includes("daily") || combined.includes("per day")) {
+      return { terminal: true, retryDelayMs };
+    }
+    return { terminal: false, retryDelayMs };
+  }
+
+  return { terminal: false, retryDelayMs };
 }
 
 function wait(ms: number): Promise<void> {

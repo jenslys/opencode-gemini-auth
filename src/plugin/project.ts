@@ -134,6 +134,9 @@ function buildIneligibleTierMessage(tiers?: GeminiIneligibleTier[]): string | un
   return reasons.join(", ");
 }
 
+/**
+ * Detects VPC-SC errors from Cloud Code responses.
+ */
 function isVpcScError(payload: unknown): boolean {
   if (!payload || typeof payload !== "object") {
     return false;
@@ -155,6 +158,9 @@ function isVpcScError(payload: unknown): boolean {
   });
 }
 
+/**
+ * Safely parses JSON, returning null on failure.
+ */
 function parseJsonSafe(text: string): unknown {
   try {
     return JSON.parse(text);
@@ -402,9 +408,10 @@ export async function resolveProjectContextFromAccessToken(
   const projectId = effectiveConfiguredProjectId ?? parts.projectId;
 
   if (projectId || parts.managedProjectId) {
+    const effectiveProjectId = projectId || parts.managedProjectId || "";
     return {
       auth,
-      effectiveProjectId: projectId || parts.managedProjectId || "",
+      effectiveProjectId,
     };
   }
 
@@ -467,12 +474,12 @@ export async function resolveProjectContextFromAccessToken(
       await persistAuth(updatedAuth);
     }
 
-    return { auth: updatedAuth, effectiveProjectId: onboardedProjectId };
-  }
+      return { auth: updatedAuth, effectiveProjectId: onboardedProjectId };
+    }
 
-  if (projectId) {
-    return { auth, effectiveProjectId: projectId };
-  }
+    if (projectId) {
+      return { auth, effectiveProjectId: projectId };
+    }
 
   throw new ProjectIdRequiredError();
 }
