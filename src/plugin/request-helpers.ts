@@ -4,6 +4,7 @@ export interface GeminiApiError {
   code?: number;
   message?: string;
   status?: string;
+  details?: unknown[];
   [key: string]: unknown;
 }
 
@@ -14,6 +15,45 @@ export interface GeminiApiBody {
   response?: unknown;
   error?: GeminiApiError;
   [key: string]: unknown;
+}
+
+interface GoogleRpcErrorInfo {
+  "@type"?: string;
+  reason?: string;
+  domain?: string;
+  metadata?: Record<string, string>;
+}
+
+interface GoogleRpcHelp {
+  "@type"?: string;
+  links?: Array<{
+    description?: string;
+    url?: string;
+  }>;
+}
+
+interface GoogleRpcQuotaFailure {
+  "@type"?: string;
+  violations?: Array<{
+    subject?: string;
+    description?: string;
+  }>;
+}
+
+interface GoogleRpcRetryInfo {
+  "@type"?: string;
+  retryDelay?: string | { seconds?: number; nanos?: number };
+}
+
+const CLOUDCODE_DOMAINS = [
+  "cloudcode-pa.googleapis.com",
+  "staging-cloudcode-pa.googleapis.com",
+  "autopush-cloudcode-pa.googleapis.com",
+];
+
+export interface GeminiErrorEnhancement {
+  body?: GeminiApiBody;
+  retryAfterMs?: number;
 }
 
 /**
@@ -148,6 +188,70 @@ export function rewriteGeminiPreviewAccessError(
   };
 }
 
+/**
+ * Enhances Gemini error responses with friendly messages and retry hints.
+ */
+export function enhanceGeminiErrorResponse(
+  body: GeminiApiBody,
+  status: number,
+): GeminiErrorEnhancement | null {
+  const error = body.error;
+  if (!error) {
+    return null;
+  }
+
+  const details = Array.isArray(error.details) ? error.details : [];
+  const retryAfterMs = extractRetryDelay(details, error.message) ?? undefined;
+
+  if (status === 403) {
+    const validationInfo = extractValidationInfo(details);
+    if (validationInfo) {
+      const message = [
+        error.message ?? "Account validation required for Gemini Code Assist.",
+        validationInfo.link ? `Complete validation: ${validationInfo.link}` : undefined,
+        validationInfo.learnMore ? `Learn more: ${validationInfo.learnMore}` : undefined,
+      ]
+        .filter(Boolean)
+        .join(" ");
+      return {
+        body: {
+          ...body,
+          error: {
+            ...error,
+            message,
+          },
+        },
+        retryAfterMs,
+      };
+    }
+  }
+
+  if (status === 429) {
+    const quotaInfo = extractQuotaInfo(details);
+    if (quotaInfo) {
+      const message = quotaInfo.retryable
+        ? `Rate limit exceeded. ${retryAfterMs ? "Please retry shortly." : "Please retry."}`
+        : "Quota exhausted for this account. Please wait for your quota to reset or upgrade your plan.";
+      return {
+        body: {
+          ...body,
+          error: {
+            ...error,
+            message,
+          },
+        },
+        retryAfterMs,
+      };
+    }
+  }
+
+  if (retryAfterMs !== undefined) {
+    return { retryAfterMs };
+  }
+
+  return null;
+}
+
 function needsPreviewAccessOverride(
   status: number,
   body: GeminiApiBody,
@@ -171,4 +275,149 @@ function isGeminiThreeModel(target?: string): boolean {
   }
 
   return /gemini[\s-]?3/i.test(target);
+}
+
+function extractValidationInfo(details: unknown[]): { link?: string; learnMore?: string } | null {
+  const errorInfo = details.find(
+    (detail): detail is GoogleRpcErrorInfo =>
+      typeof detail === "object" &&
+      detail !== null &&
+      (detail as GoogleRpcErrorInfo)["@type"] === "type.googleapis.com/google.rpc.ErrorInfo",
+  );
+
+  if (
+    !errorInfo ||
+    errorInfo.reason !== "VALIDATION_REQUIRED" ||
+    !errorInfo.domain ||
+    !CLOUDCODE_DOMAINS.includes(errorInfo.domain)
+  ) {
+    return null;
+  }
+
+  const helpDetail = details.find(
+    (detail): detail is GoogleRpcHelp =>
+      typeof detail === "object" &&
+      detail !== null &&
+      (detail as GoogleRpcHelp)["@type"] === "type.googleapis.com/google.rpc.Help",
+  );
+
+  let link: string | undefined;
+  let learnMore: string | undefined;
+  if (helpDetail?.links && helpDetail.links.length > 0) {
+    link = helpDetail.links[0]?.url;
+    const learnMoreLink = helpDetail.links.find((candidate) => {
+      if (!candidate?.url) {
+        return false;
+      }
+      if (candidate.description?.toLowerCase().trim() === "learn more") {
+        return true;
+      }
+      try {
+        return new URL(candidate.url).hostname === "support.google.com";
+      } catch {
+        return false;
+      }
+    });
+    learnMore = learnMoreLink?.url;
+  }
+
+  if (!link && errorInfo.metadata?.validation_link) {
+    link = errorInfo.metadata.validation_link;
+  }
+
+  return link || learnMore ? { link, learnMore } : null;
+}
+
+function extractQuotaInfo(details: unknown[]): { retryable: boolean } | null {
+  const errorInfo = details.find(
+    (detail): detail is GoogleRpcErrorInfo =>
+      typeof detail === "object" &&
+      detail !== null &&
+      (detail as GoogleRpcErrorInfo)["@type"] === "type.googleapis.com/google.rpc.ErrorInfo",
+  );
+
+  if (errorInfo?.reason === "RATE_LIMIT_EXCEEDED") {
+    return { retryable: true };
+  }
+  if (errorInfo?.reason === "QUOTA_EXHAUSTED") {
+    return { retryable: false };
+  }
+
+  const quotaFailure = details.find(
+    (detail): detail is GoogleRpcQuotaFailure =>
+      typeof detail === "object" &&
+      detail !== null &&
+      (detail as GoogleRpcQuotaFailure)["@type"] === "type.googleapis.com/google.rpc.QuotaFailure",
+  );
+
+  if (quotaFailure?.violations?.length) {
+    const description = quotaFailure.violations
+      .map((violation) => violation.description?.toLowerCase() ?? "")
+      .join(" ");
+    if (description.includes("daily") || description.includes("per day")) {
+      return { retryable: false };
+    }
+    return { retryable: true };
+  }
+
+  return null;
+}
+
+function extractRetryDelay(details: unknown[], errorMessage?: string): number | null {
+  const retryInfo = details.find(
+    (detail): detail is GoogleRpcRetryInfo =>
+      typeof detail === "object" &&
+      detail !== null &&
+      (detail as GoogleRpcRetryInfo)["@type"] === "type.googleapis.com/google.rpc.RetryInfo",
+  );
+
+  if (retryInfo?.retryDelay) {
+    const delayMs = parseRetryDelayValue(retryInfo.retryDelay);
+    if (delayMs !== null) {
+      return delayMs;
+    }
+  }
+
+  if (errorMessage) {
+    const retryMatch = errorMessage.match(/Please retry in ([0-9.]+(?:ms|s))/);
+    if (retryMatch?.[1]) {
+      return parseRetryDelayValue(retryMatch[1]);
+    }
+    const resetMatch = errorMessage.match(/after\s+([0-9.]+(?:ms|s))/i);
+    if (resetMatch?.[1]) {
+      return parseRetryDelayValue(resetMatch[1]);
+    }
+  }
+
+  return null;
+}
+
+function parseRetryDelayValue(value: string | { seconds?: number; nanos?: number }): number | null {
+  if (!value) {
+    return null;
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return null;
+    }
+    if (trimmed.endsWith("ms")) {
+      const ms = Number(trimmed.slice(0, -2));
+      return Number.isFinite(ms) && ms > 0 ? Math.round(ms) : null;
+    }
+    const match = trimmed.match(/^([\d.]+)s$/);
+    if (match?.[1]) {
+      const seconds = Number(match[1]);
+      return Number.isFinite(seconds) && seconds > 0 ? Math.round(seconds * 1000) : null;
+    }
+    return null;
+  }
+
+  const seconds = typeof value.seconds === "number" ? value.seconds : 0;
+  const nanos = typeof value.nanos === "number" ? value.nanos : 0;
+  if (!Number.isFinite(seconds) || !Number.isFinite(nanos)) {
+    return null;
+  }
+  const totalMs = Math.round(seconds * 1000 + nanos / 1e6);
+  return totalMs > 0 ? totalMs : null;
 }

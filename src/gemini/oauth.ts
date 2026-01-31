@@ -7,6 +7,11 @@ import {
   GEMINI_REDIRECT_URI,
   GEMINI_SCOPES,
 } from "../constants";
+import {
+  formatDebugBodyPreview,
+  isGeminiDebugEnabled,
+  logGeminiDebugMessage,
+} from "../plugin/debug";
 
 interface PkcePair {
   challenge: string;
@@ -97,6 +102,9 @@ async function exchangeGeminiWithVerifierInternal(
   code: string,
   verifier: string,
 ): Promise<GeminiTokenExchangeResult> {
+  if (isGeminiDebugEnabled()) {
+    logGeminiDebugMessage("OAuth exchange: POST https://oauth2.googleapis.com/token");
+  }
   const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
     headers: {
@@ -114,11 +122,28 @@ async function exchangeGeminiWithVerifierInternal(
 
   if (!tokenResponse.ok) {
     const errorText = await tokenResponse.text();
+    if (isGeminiDebugEnabled()) {
+      logGeminiDebugMessage(
+        `OAuth exchange response: ${tokenResponse.status} ${tokenResponse.statusText}`,
+      );
+      const preview = formatDebugBodyPreview(errorText);
+      if (preview) {
+        logGeminiDebugMessage(`OAuth exchange error body: ${preview}`);
+      }
+    }
     return { type: "failed", error: errorText };
   }
 
   const tokenPayload = (await tokenResponse.json()) as GeminiTokenResponse;
+  if (isGeminiDebugEnabled()) {
+    logGeminiDebugMessage(
+      `OAuth exchange success: expires_in=${tokenPayload.expires_in}s refresh_token=${tokenPayload.refresh_token ? "yes" : "no"}`,
+    );
+  }
 
+  if (isGeminiDebugEnabled()) {
+    logGeminiDebugMessage("OAuth userinfo: GET https://www.googleapis.com/oauth2/v1/userinfo");
+  }
   const userInfoResponse = await fetch(
     "https://www.googleapis.com/oauth2/v1/userinfo?alt=json",
     {
@@ -127,6 +152,11 @@ async function exchangeGeminiWithVerifierInternal(
       },
     },
   );
+  if (isGeminiDebugEnabled()) {
+    logGeminiDebugMessage(
+      `OAuth userinfo response: ${userInfoResponse.status} ${userInfoResponse.statusText}`,
+    );
+  }
 
   const userInfo = userInfoResponse.ok
     ? ((await userInfoResponse.json()) as GeminiUserInfo)

@@ -1,6 +1,7 @@
 import { CODE_ASSIST_HEADERS, GEMINI_CODE_ASSIST_ENDPOINT } from "../constants";
 import { logGeminiDebugResponse, type GeminiDebugContext } from "./debug";
 import {
+  enhanceGeminiErrorResponse,
   extractUsageMetadata,
   normalizeThinkingConfig,
   parseGeminiApiBody,
@@ -419,32 +420,7 @@ export async function transformGeminiResponse(
     }
 
     const text = await response.text();
-    
-    if (!response.ok && text) {
-      try {
-        const errorBody = JSON.parse(text);
-        if (errorBody?.error?.details && Array.isArray(errorBody.error.details)) {
-          const retryInfo = errorBody.error.details.find(
-            (detail: any) => detail['@type'] === 'type.googleapis.com/google.rpc.RetryInfo'
-          );
-          
-          if (retryInfo?.retryDelay) {
-            const match = retryInfo.retryDelay.match(/^([\d.]+)s$/);
-            if (match && match[1]) {
-              const retrySeconds = parseFloat(match[1]);
-              if (!isNaN(retrySeconds) && retrySeconds > 0) {
-                const retryAfterSec = Math.ceil(retrySeconds).toString();
-                const retryAfterMs = Math.ceil(retrySeconds * 1000).toString();
-                headers.set('Retry-After', retryAfterSec);
-                headers.set('retry-after-ms', retryAfterMs);
-              }
-            }
-          }
-        }
-      } catch (parseError) {
-      }
-    }
-    
+
     const init = {
       status: response.status,
       statusText: response.statusText,
@@ -452,8 +428,16 @@ export async function transformGeminiResponse(
     };
 
     const parsed: GeminiApiBody | null = !streaming || !isEventStreamResponse ? parseGeminiApiBody(text) : null;
-    const patched = parsed ? rewriteGeminiPreviewAccessError(parsed, response.status, requestedModel) : null;
-    const effectiveBody = patched ?? parsed ?? undefined;
+    const enhanced = !response.ok && parsed ? enhanceGeminiErrorResponse(parsed, response.status) : null;
+    if (enhanced?.retryAfterMs) {
+      const retryAfterSec = Math.ceil(enhanced.retryAfterMs / 1000).toString();
+      headers.set("Retry-After", retryAfterSec);
+      headers.set("retry-after-ms", String(enhanced.retryAfterMs));
+    }
+    const previewPatched = parsed
+      ? rewriteGeminiPreviewAccessError(enhanced?.body ?? parsed, response.status, requestedModel)
+      : null;
+    const effectiveBody = previewPatched ?? enhanced?.body ?? parsed ?? undefined;
 
     const usage = effectiveBody ? extractUsageMetadata(effectiveBody) : null;
     if (usage?.cachedContentTokenCount !== undefined) {
@@ -483,8 +467,8 @@ export async function transformGeminiResponse(
       return new Response(JSON.stringify(effectiveBody.response), init);
     }
 
-    if (patched) {
-      return new Response(JSON.stringify(patched), init);
+    if (previewPatched) {
+      return new Response(JSON.stringify(previewPatched), init);
     }
 
     return new Response(text, init);

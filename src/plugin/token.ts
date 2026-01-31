@@ -5,6 +5,11 @@ import {
 } from "../constants";
 import { formatRefreshParts, parseRefreshParts } from "./auth";
 import { clearCachedAuth, storeCachedAuth } from "./cache";
+import {
+  formatDebugBodyPreview,
+  isGeminiDebugEnabled,
+  logGeminiDebugMessage,
+} from "./debug";
 import { invalidateProjectContextCache } from "./project";
 import type { OAuthAuthDetails, PluginClient, RefreshParts } from "./types";
 
@@ -71,6 +76,9 @@ export async function refreshAccessToken(
   }
 
   try {
+    if (isGeminiDebugEnabled()) {
+      logGeminiDebugMessage("OAuth refresh: POST https://oauth2.googleapis.com/token");
+    }
     const response = await fetch("https://oauth2.googleapis.com/token", {
       method: "POST",
       headers: {
@@ -90,6 +98,15 @@ export async function refreshAccessToken(
         errorText = await response.text();
       } catch {
         errorText = undefined;
+      }
+      if (isGeminiDebugEnabled()) {
+        logGeminiDebugMessage(
+          `OAuth refresh response: ${response.status} ${response.statusText}`,
+        );
+        const preview = formatDebugBodyPreview(errorText);
+        if (preview) {
+          logGeminiDebugMessage(`OAuth refresh error body: ${preview}`);
+        }
       }
 
       const { code, description } = parseOAuthErrorPayload(errorText);
@@ -128,6 +145,12 @@ export async function refreshAccessToken(
       expires_in: number;
       refresh_token?: string;
     };
+    if (isGeminiDebugEnabled()) {
+      const rotated = payload.refresh_token && payload.refresh_token !== parts.refreshToken;
+      logGeminiDebugMessage(
+        `OAuth refresh success: expires_in=${payload.expires_in}s refresh_rotated=${rotated ? "yes" : "no"}`,
+      );
+    }
 
     const refreshedParts: RefreshParts = {
       refreshToken: payload.refresh_token ?? parts.refreshToken,
@@ -145,13 +168,15 @@ export async function refreshAccessToken(
     storeCachedAuth(updatedAuth);
     invalidateProjectContextCache(auth.refresh);
 
-    try {
-      await client.auth.set({
-        path: { id: GEMINI_PROVIDER_ID },
-        body: updatedAuth,
-      });
-    } catch (storeError) {
-      console.error("Failed to persist refreshed Gemini OAuth credentials:", storeError);
+    if (refreshedParts.refreshToken !== parts.refreshToken) {
+      try {
+        await client.auth.set({
+          path: { id: GEMINI_PROVIDER_ID },
+          body: updatedAuth,
+        });
+      } catch (storeError) {
+        console.error("Failed to persist refreshed Gemini OAuth credentials:", storeError);
+      }
     }
 
     return updatedAuth;

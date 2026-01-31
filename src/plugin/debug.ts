@@ -34,6 +34,33 @@ interface GeminiDebugResponseMeta {
 let requestCounter = 0;
 
 /**
+ * Returns true when Gemini debug logging is enabled.
+ */
+export function isGeminiDebugEnabled(): boolean {
+  return debugEnabled;
+}
+
+/**
+ * Writes an arbitrary debug line when debugging is enabled.
+ */
+export function logGeminiDebugMessage(message: string): void {
+  if (!debugEnabled) {
+    return;
+  }
+  logDebug(`[Gemini Debug] ${message}`);
+}
+
+/**
+ * Produces a truncated preview of a debug body payload.
+ */
+export function formatDebugBodyPreview(text?: string | null): string | undefined {
+  if (!text) {
+    return undefined;
+  }
+  return truncateForLog(text);
+}
+
+/**
  * Begins a debug trace for a Gemini request, logging request metadata when debugging is enabled.
  */
 export function startGeminiDebugRequest(meta: GeminiDebugRequestMeta): GeminiDebugContext | null {
@@ -82,6 +109,11 @@ export function logGeminiDebugResponse(
     )}`,
   );
 
+  const traceId = getHeaderValue(meta.headersOverride ?? response.headers, "x-cloudaicompanion-trace-id");
+  if (traceId) {
+    logDebug(`[Gemini Debug ${context.id}] Trace ID: ${traceId}`);
+  }
+
   if (meta.note) {
     logDebug(`[Gemini Debug ${context.id}] Note: ${meta.note}`);
   }
@@ -115,6 +147,34 @@ function maskHeaders(headers?: HeadersInit | Headers): Record<string, string> {
     }
   });
   return result;
+}
+
+/**
+ * Reads a header value from a HeadersInit or Headers instance.
+ */
+function getHeaderValue(headers: HeadersInit | Headers, key: string): string | undefined {
+  const target = key.toLowerCase();
+  if (headers instanceof Headers) {
+    const value = headers.get(key);
+    return value ?? undefined;
+  }
+
+  if (Array.isArray(headers)) {
+    for (const [headerKey, headerValue] of headers) {
+      if (headerKey.toLowerCase() === target) {
+        return headerValue;
+      }
+    }
+    return undefined;
+  }
+
+  const record = headers as Record<string, string | undefined>;
+  for (const [headerKey, headerValue] of Object.entries(record)) {
+    if (headerKey.toLowerCase() === target) {
+      return headerValue ?? undefined;
+    }
+  }
+  return undefined;
 }
 
 /**
