@@ -5,7 +5,7 @@ export {
 
 export {
   authorizeGemini,
-  exchangeGemini,
+  exchangeGeminiWithVerifier,
 } from "./src/gemini/oauth";
 
 export type {

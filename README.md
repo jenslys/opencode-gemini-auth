@@ -15,7 +15,7 @@ directly within Opencode, bypassing separate API billing.
 ## Installation
 
 Add the plugin to your Opencode configuration file
-(`~/.config/opencode/config.json` or similar):
+(`~/.config/opencode/opencode.json` or similar):
 
 ```json
 {
@@ -23,6 +23,12 @@ Add the plugin to your Opencode configuration file
   "plugin": ["opencode-gemini-auth@latest"]
 }
 ```
+
+> [!IMPORTANT]
+> If you're using a paid Gemini Code Assist subscription (Standard/Enterprise),
+> explicitly configure a Google Cloud `projectId`. Free tier accounts should
+> auto-provision a managed project, but you can still set `projectId` to force
+> a specific project.
 
 ## Usage
 
@@ -46,7 +52,10 @@ Once authenticated, Opencode will use your Google account for Gemini requests.
 ### Google Cloud Project
 
 By default, the plugin attempts to provision or find a suitable Google Cloud
-project. To force a specific project, set the `projectId` in your configuration:
+project. To force a specific project, set the `projectId` in your configuration
+or via environment variables:
+
+**File:** `~/.config/opencode/opencode.json`
 
 ```json
 {
@@ -60,19 +69,44 @@ project. To force a specific project, set the `projectId` in your configuration:
 }
 ```
 
-### Thinking Models
+You can also set `OPENCODE_GEMINI_PROJECT_ID`, `GOOGLE_CLOUD_PROJECT`, or
+`GOOGLE_CLOUD_PROJECT_ID` to supply the project ID via environment variables.
 
-Configure "thinking" capabilities for Gemini models using the `thinkingConfig`
-option in your `config.json`.
+### Model list
 
-**Gemini 3 (Thinking Level)**
-Use `thinkingLevel` (`"low"`, `"high"`) for Gemini 3 models.
+Below are example model entries you can add under `provider.google.models` in your
+Opencode config. Each model can include an `options.thinkingConfig` block to
+enable "thinking" features.
 
 ```json
 {
   "provider": {
     "google": {
       "models": {
+        "gemini-2.5-flash": {
+          "options": {
+            "thinkingConfig": {
+              "thinkingBudget": 8192,
+              "includeThoughts": true
+            }
+          }
+        },
+        "gemini-2.5-pro": {
+          "options": {
+            "thinkingConfig": {
+              "thinkingBudget": 8192,
+              "includeThoughts": true
+            }
+          }
+        },
+        "gemini-3-flash-preview": {
+          "options": {
+            "thinkingConfig": {
+              "thinkingLevel": "high",
+              "includeThoughts": true
+            }
+          }
+        },
         "gemini-3-pro-preview": {
           "options": {
             "thinkingConfig": {
@@ -87,14 +121,33 @@ Use `thinkingLevel` (`"low"`, `"high"`) for Gemini 3 models.
 }
 ```
 
-**Gemini 2.5 (Thinking Budget)**
-Use `thinkingBudget` (token count) for Gemini 2.5 models.
+Note: Available model names and previews may change—check Google's documentation or
+the Gemini product page for the current model identifiers.
+
+### Thinking Models
+
+The plugin supports configuring Gemini "thinking" features per-model via
+`thinkingConfig`. The available fields depend on the model family:
+
+- For Gemini 3 models: use `thinkingLevel` with values `"low"` or `"high"`.
+- For Gemini 2.5 models: use `thinkingBudget` (token count).
+- `includeThoughts` (boolean) controls whether the model emits internal thoughts.
+
+A combined example showing both model types:
 
 ```json
 {
   "provider": {
     "google": {
       "models": {
+        "gemini-3-pro-preview": {
+          "options": {
+            "thinkingConfig": {
+              "thinkingLevel": "high",
+              "includeThoughts": true
+            }
+          }
+        },
         "gemini-2.5-flash": {
           "options": {
             "thinkingConfig": {
@@ -109,6 +162,9 @@ Use `thinkingBudget` (token count) for Gemini 2.5 models.
 }
 ```
 
+If you don't set a `thinkingConfig` for a model, the plugin will use default
+behavior for that model.
+
 ## Troubleshooting
 
 ### Manual Google Cloud Setup
@@ -121,6 +177,20 @@ If automatic provisioning fails, you may need to set up the project manually:
    (`cloudaicompanion.googleapis.com`).
 4. Configure the `projectId` in your Opencode config as shown above.
 
+### Quotas, Plans, and 429 Errors
+
+Common causes of `429 RESOURCE_EXHAUSTED` or `QUOTA_EXHAUSTED`:
+
+- **No project ID configured**: the plugin uses a managed free-tier project, which has lower quotas.
+- **Model-specific limits**: quotas are tracked per model (e.g., `gemini-3-pro-preview` vs `gemini-3-flash-preview`).
+- **Large prompts**: OAuth/Code Assist does not support cached content, so long system prompts and history can burn quota quickly.
+- **Parallel sessions**: multiple Opencode windows can drain the same bucket.
+
+Notes:
+
+- **Gemini CLI auto-fallbacks**: the official CLI may fall back to Flash when Pro quotas are exhausted, so it can appear to “work” even if the Pro bucket is depleted.
+- **Paid plans still require a project**: to use paid quotas in Opencode, set `provider.google.options.projectId` (or `OPENCODE_GEMINI_PROJECT_ID`) and re-authenticate.
+
 ### Debugging
 
 To view detailed logs of Gemini requests and responses, set the
@@ -132,6 +202,17 @@ OPENCODE_GEMINI_DEBUG=1 opencode
 
 This will generate `gemini-debug-<timestamp>.log` files in your working
 directory containing sanitized request/response details.
+
+## Parity Notes
+
+This plugin mirrors the official Gemini CLI OAuth flow and Code Assist
+endpoints. In particular, project onboarding and quota retry handling follow
+the same behavior patterns as the Gemini CLI.
+
+### References
+
+- Gemini CLI repository: https://github.com/google-gemini/gemini-cli
+- Gemini CLI quota documentation: https://developers.google.com/gemini-code-assist/resources/quotas
 
 ### Updating
 

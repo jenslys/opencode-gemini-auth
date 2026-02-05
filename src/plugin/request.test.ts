@@ -1,0 +1,50 @@
+import { describe, expect, it } from "bun:test";
+
+import { GEMINI_CODE_ASSIST_ENDPOINT } from "../constants";
+import { isGenerativeLanguageRequest, prepareGeminiRequest } from "./request";
+
+describe("request helpers", () => {
+  it("detects generativelanguage URLs", () => {
+    expect(
+      isGenerativeLanguageRequest(
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent",
+      ),
+    ).toBe(true);
+    expect(isGenerativeLanguageRequest("https://example.com/foo")).toBe(false);
+  });
+
+  it("wraps requests for Gemini Code Assist streaming", () => {
+    const input =
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:streamGenerateContent";
+    const init: RequestInit = {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": "should-be-removed",
+      },
+      body: JSON.stringify({
+        contents: [{ role: "user", parts: [{ text: "hi" }] }],
+        system_instruction: { parts: [{ text: "system" }] },
+      }),
+    };
+
+    const result = prepareGeminiRequest(input, init, "token-123", "project-456");
+
+    expect(result.streaming).toBe(true);
+    expect(typeof result.request).toBe("string");
+    expect(result.request).toBe(
+      `${GEMINI_CODE_ASSIST_ENDPOINT}/v1internal:streamGenerateContent?alt=sse`,
+    );
+
+    const headers = new Headers(result.init.headers);
+    expect(headers.get("Authorization")).toBe("Bearer token-123");
+    expect(headers.get("x-api-key")).toBeNull();
+    expect(headers.get("Accept")).toBe("text/event-stream");
+
+    const parsed = JSON.parse(result.init.body as string) as Record<string, unknown>;
+    expect(parsed.project).toBe("project-456");
+    expect(parsed.model).toBe("gemini-3-flash-preview");
+    expect((parsed.request as Record<string, unknown>).systemInstruction).toBeDefined();
+    expect((parsed.request as Record<string, unknown>).system_instruction).toBeUndefined();
+  });
+});

@@ -1,6 +1,7 @@
 import { CODE_ASSIST_HEADERS, GEMINI_CODE_ASSIST_ENDPOINT } from "../constants";
 import { logGeminiDebugResponse, type GeminiDebugContext } from "./debug";
 import {
+  enhanceGeminiErrorResponse,
   extractUsageMetadata,
   normalizeThinkingConfig,
   parseGeminiApiBody,
@@ -13,6 +14,137 @@ const STREAM_ACTION = "streamGenerateContent";
 const MODEL_FALLBACKS: Record<string, string> = {
   "gemini-2.5-flash-image": "gemini-2.5-flash",
 };
+
+interface GeminiFunctionCallPart {
+  functionCall?: {
+    name: string;
+    args?: Record<string, unknown>;
+    [key: string]: unknown;
+  };
+  thoughtSignature?: string;
+  [key: string]: unknown;
+}
+
+interface GeminiContentPart {
+  role?: string;
+  parts?: GeminiFunctionCallPart[];
+  [key: string]: unknown;
+}
+
+interface OpenAIToolCall {
+  id?: string;
+  type?: string;
+  function?: {
+    name?: string;
+    arguments?: string;
+    [key: string]: unknown;
+  };
+  [key: string]: unknown;
+}
+
+interface OpenAIMessage {
+  role?: string;
+  content?: string | null;
+  tool_calls?: OpenAIToolCall[];
+  tool_call_id?: string;
+  name?: string;
+  [key: string]: unknown;
+}
+
+/**
+ * Transforms OpenAI tool_calls to Gemini functionCall format and adds thoughtSignature.
+ * This ensures compatibility when OpenCode sends OpenAI-format function calls.
+ */
+function transformOpenAIToolCalls(requestPayload: Record<string, unknown>): void {
+  const messages = requestPayload.messages;
+  if (!messages || !Array.isArray(messages)) {
+    return;
+  }
+
+  for (const message of messages) {
+    if (message && typeof message === "object") {
+      const msgObj = message as OpenAIMessage;
+      const toolCalls = msgObj.tool_calls;
+      if (toolCalls && Array.isArray(toolCalls) && toolCalls.length > 0) {
+        const parts: GeminiFunctionCallPart[] = [];
+
+        if (typeof msgObj.content === "string" && msgObj.content.length > 0) {
+          parts.push({ text: msgObj.content });
+        }
+
+        for (const toolCall of toolCalls) {
+          if (toolCall && typeof toolCall === "object") {
+            const functionObj = toolCall.function;
+            if (functionObj && typeof functionObj === "object") {
+              const name = functionObj.name;
+              const argsStr = functionObj.arguments;
+              let args: Record<string, unknown> = {};
+              if (typeof argsStr === "string") {
+                try {
+                  args = JSON.parse(argsStr) as Record<string, unknown>;
+                } catch {
+                  args = {};
+                }
+              }
+
+              parts.push({
+                functionCall: {
+                  name: name ?? "",
+                  args,
+                },
+                thoughtSignature: "skip_thought_signature_validator",
+              });
+            }
+          }
+        }
+
+        msgObj.parts = parts;
+        delete msgObj.tool_calls;
+        delete msgObj.content;
+      }
+    }
+  }
+}
+
+/**
+ * Adds thoughtSignature to function call parts in the request payload.
+ * Gemini 3+ models require thoughtSignature for function calls when using thinking capabilities.
+ * This must be applied to all content blocks in the conversation history.
+ * Handles both flat contents arrays and nested request.contents (wrapped bodies).
+ */
+function addThoughtSignaturesToFunctionCalls(requestPayload: Record<string, unknown>): void {
+  const processContents = (contents: unknown): void => {
+    if (!contents || !Array.isArray(contents)) {
+      return;
+    }
+
+    for (const content of contents) {
+      if (content && typeof content === "object") {
+        const contentObj = content as Record<string, unknown>;
+        const parts = contentObj.parts;
+        if (parts && Array.isArray(parts)) {
+          for (const part of parts) {
+            if (part && typeof part === "object") {
+              const partObj = part as Record<string, unknown>;
+              if (partObj.functionCall && !partObj.thoughtSignature) {
+                partObj.thoughtSignature = "skip_thought_signature_validator";
+              }
+            }
+          }
+        }
+      }
+    }
+  };
+
+  processContents(requestPayload.contents);
+
+  const nestedRequest = requestPayload.request;
+  if (nestedRequest && typeof nestedRequest === "object") {
+    const requestObj = nestedRequest as Record<string, unknown>;
+    processContents(requestObj.contents);
+  }
+}
+
 /**
  * Detects Gemini/Generative Language API requests by URL.
  * @param input Request target passed to fetch.
@@ -155,6 +287,9 @@ export function prepareGeminiRequest(
       } else {
         const requestPayload: Record<string, unknown> = { ...parsedBody };
 
+        transformOpenAIToolCalls(requestPayload);
+        addThoughtSignaturesToFunctionCalls(requestPayload);
+
         const rawGenerationConfig = requestPayload.generationConfig as Record<string, unknown> | undefined;
         const normalizedThinking = normalizeThinkingConfig(rawGenerationConfig?.thinkingConfig);
         if (normalizedThinking) {
@@ -285,32 +420,7 @@ export async function transformGeminiResponse(
     }
 
     const text = await response.text();
-    
-    if (!response.ok && text) {
-      try {
-        const errorBody = JSON.parse(text);
-        if (errorBody?.error?.details && Array.isArray(errorBody.error.details)) {
-          const retryInfo = errorBody.error.details.find(
-            (detail: any) => detail['@type'] === 'type.googleapis.com/google.rpc.RetryInfo'
-          );
-          
-          if (retryInfo?.retryDelay) {
-            const match = retryInfo.retryDelay.match(/^([\d.]+)s$/);
-            if (match && match[1]) {
-              const retrySeconds = parseFloat(match[1]);
-              if (!isNaN(retrySeconds) && retrySeconds > 0) {
-                const retryAfterSec = Math.ceil(retrySeconds).toString();
-                const retryAfterMs = Math.ceil(retrySeconds * 1000).toString();
-                headers.set('Retry-After', retryAfterSec);
-                headers.set('retry-after-ms', retryAfterMs);
-              }
-            }
-          }
-        }
-      } catch (parseError) {
-      }
-    }
-    
+
     const init = {
       status: response.status,
       statusText: response.statusText,
@@ -318,8 +428,16 @@ export async function transformGeminiResponse(
     };
 
     const parsed: GeminiApiBody | null = !streaming || !isEventStreamResponse ? parseGeminiApiBody(text) : null;
-    const patched = parsed ? rewriteGeminiPreviewAccessError(parsed, response.status, requestedModel) : null;
-    const effectiveBody = patched ?? parsed ?? undefined;
+    const enhanced = !response.ok && parsed ? enhanceGeminiErrorResponse(parsed, response.status) : null;
+    if (enhanced?.retryAfterMs) {
+      const retryAfterSec = Math.ceil(enhanced.retryAfterMs / 1000).toString();
+      headers.set("Retry-After", retryAfterSec);
+      headers.set("retry-after-ms", String(enhanced.retryAfterMs));
+    }
+    const previewPatched = parsed
+      ? rewriteGeminiPreviewAccessError(enhanced?.body ?? parsed, response.status, requestedModel)
+      : null;
+    const effectiveBody = previewPatched ?? enhanced?.body ?? parsed ?? undefined;
 
     const usage = effectiveBody ? extractUsageMetadata(effectiveBody) : null;
     if (usage?.cachedContentTokenCount !== undefined) {
@@ -349,8 +467,8 @@ export async function transformGeminiResponse(
       return new Response(JSON.stringify(effectiveBody.response), init);
     }
 
-    if (patched) {
-      return new Response(JSON.stringify(patched), init);
+    if (previewPatched) {
+      return new Response(JSON.stringify(previewPatched), init);
     }
 
     return new Response(text, init);

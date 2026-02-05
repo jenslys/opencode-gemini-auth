@@ -3,13 +3,15 @@ import { spawn } from "node:child_process";
 import { GEMINI_PROVIDER_ID, GEMINI_REDIRECT_URI } from "./constants";
 import {
   authorizeGemini,
-  exchangeGemini,
   exchangeGeminiWithVerifier,
 } from "./gemini/oauth";
 import type { GeminiTokenExchangeResult } from "./gemini/oauth";
 import { accessTokenExpired, isOAuthAuth } from "./plugin/auth";
-import { ensureProjectContext } from "./plugin/project";
-import { startGeminiDebugRequest } from "./plugin/debug";
+import {
+  ensureProjectContext,
+  resolveProjectContextFromAccessToken,
+} from "./plugin/project";
+import { isGeminiDebugEnabled, logGeminiDebugMessage, startGeminiDebugRequest } from "./plugin/debug";
 import {
   isGenerativeLanguageRequest,
   prepareGeminiRequest,
@@ -22,6 +24,7 @@ import { geminiQuota } from "./plugin/tools";
 import type {
   GetAuth,
   LoaderResult,
+  OAuthAuthDetails,
   PluginContext,
   PluginResult,
   ProjectContextResult,
@@ -56,7 +59,12 @@ export const GeminiCLIOAuthPlugin = async (
           ? providerOptions.projectId.trim()
           : "";
       const projectIdFromEnv = process.env.OPENCODE_GEMINI_PROJECT_ID?.trim() ?? "";
-      const configuredProjectId = projectIdFromEnv || projectIdFromConfig || undefined;
+      const googleProjectIdFromEnv =
+        process.env.GOOGLE_CLOUD_PROJECT?.trim() ??
+        process.env.GOOGLE_CLOUD_PROJECT_ID?.trim() ??
+        "";
+      const configuredProjectId =
+        projectIdFromEnv || projectIdFromConfig || googleProjectIdFromEnv || undefined;
 
       if (provider.models) {
         for (const model of Object.values(provider.models)) {
@@ -132,7 +140,7 @@ export const GeminiCLIOAuthPlugin = async (
             projectId: projectContext.effectiveProjectId,
           });
 
-          const response = await fetch(request, transformedInit);
+          const response = await fetchWithRetry(request, transformedInit);
           return transformGeminiResponse(response, streaming, debugContext, requestedModel);
         },
       };
@@ -142,6 +150,57 @@ export const GeminiCLIOAuthPlugin = async (
         label: "OAuth with Google (Gemini CLI)",
         type: "oauth",
         authorize: async () => {
+          const maybeHydrateProjectId = async (
+            result: GeminiTokenExchangeResult,
+          ): Promise<GeminiTokenExchangeResult> => {
+            if (result.type !== "success") {
+              return result;
+            }
+
+            const accessToken = result.access;
+            if (!accessToken) {
+              return result;
+            }
+
+            const projectFromEnv = process.env.OPENCODE_GEMINI_PROJECT_ID?.trim() ?? "";
+            const googleProjectFromEnv =
+              process.env.GOOGLE_CLOUD_PROJECT?.trim() ??
+              process.env.GOOGLE_CLOUD_PROJECT_ID?.trim() ??
+              "";
+            const configuredProjectId =
+              projectFromEnv || googleProjectFromEnv || undefined;
+
+            try {
+              const authSnapshot = {
+                type: "oauth",
+                refresh: result.refresh,
+                access: result.access,
+                expires: result.expires,
+              } satisfies OAuthAuthDetails;
+              const projectContext = await resolveProjectContextFromAccessToken(
+                authSnapshot,
+                accessToken,
+                configuredProjectId,
+              );
+
+              if (projectContext.auth.refresh !== result.refresh) {
+                if (isGeminiDebugEnabled()) {
+                  logGeminiDebugMessage(
+                    `OAuth project resolved during auth: ${projectContext.effectiveProjectId || "none"}`,
+                  );
+                }
+                return { ...result, refresh: projectContext.auth.refresh };
+              }
+            } catch (error) {
+              if (isGeminiDebugEnabled()) {
+                const message = error instanceof Error ? error.message : String(error);
+                console.warn(`[Gemini OAuth] Project resolution skipped: ${message}`);
+              }
+            }
+
+            return result;
+          };
+
           const isHeadless = !!(
             process.env.SSH_CONNECTION ||
             process.env.SSH_CLIENT ||
@@ -194,7 +253,16 @@ export const GeminiCLIOAuthPlugin = async (
                     };
                   }
 
-                  return await exchangeGemini(code, state);
+                  if (state !== authorization.state) {
+                    return {
+                      type: "failed",
+                      error: "State mismatch in callback URL (possible CSRF attempt)",
+                    };
+                  }
+
+                  return await maybeHydrateProjectId(
+                    await exchangeGeminiWithVerifier(code, authorization.verifier),
+                  );
                 } catch (error) {
                   return {
                     type: "failed",
@@ -214,10 +282,10 @@ export const GeminiCLIOAuthPlugin = async (
             url: authorization.url,
             instructions:
               "Complete OAuth in your browser, then paste the full redirected URL (e.g., http://localhost:8085/oauth2callback?code=...&state=...) or just the authorization code.",
-            method: "code",
-            callback: async (callbackUrl: string): Promise<GeminiTokenExchangeResult> => {
-              try {
-                const { code, state } = parseOAuthCallbackInput(callbackUrl);
+              method: "code",
+              callback: async (callbackUrl: string): Promise<GeminiTokenExchangeResult> => {
+                try {
+                  const { code, state } = parseOAuthCallbackInput(callbackUrl);
 
                 if (!code) {
                   return {
@@ -226,11 +294,16 @@ export const GeminiCLIOAuthPlugin = async (
                   };
                 }
 
-                if (state) {
-                  return exchangeGemini(code, state);
+                if (state && state !== authorization.state) {
+                  return {
+                    type: "failed",
+                    error: "State mismatch in callback input (possible CSRF attempt)",
+                  };
                 }
 
-                return exchangeGeminiWithVerifier(code, authorization.verifier);
+                return await maybeHydrateProjectId(
+                  await exchangeGeminiWithVerifier(code, authorization.verifier),
+                );
               } catch (error) {
                 return {
                   type: "failed",
@@ -251,6 +324,16 @@ export const GeminiCLIOAuthPlugin = async (
 });
 
 export const GoogleOAuthPlugin = GeminiCLIOAuthPlugin;
+
+const RETRYABLE_STATUS_CODES = new Set([429, 503]);
+const DEFAULT_MAX_RETRIES = 2;
+const DEFAULT_BASE_DELAY_MS = 800;
+const DEFAULT_MAX_DELAY_MS = 8000;
+const CLOUDCODE_DOMAINS = [
+  "cloudcode-pa.googleapis.com",
+  "staging-cloudcode-pa.googleapis.com",
+  "autopush-cloudcode-pa.googleapis.com",
+];
 
 function toUrlString(value: RequestInfo): string {
   if (typeof value === "string") {
@@ -313,4 +396,310 @@ function openBrowserUrl(url: string): void {
     child.unref?.();
   } catch {
   }
+}
+
+/**
+ * Sends requests with bounded retry logic for transient Cloud Code failures.
+ * Mirrors the Gemini CLI handling of Code Assist rate-limit signals.
+ */
+async function fetchWithRetry(input: RequestInfo, init: RequestInit | undefined): Promise<Response> {
+  const maxRetries = DEFAULT_MAX_RETRIES;
+  const baseDelayMs = DEFAULT_BASE_DELAY_MS;
+  const maxDelayMs = DEFAULT_MAX_DELAY_MS;
+
+  if (!canRetryRequest(init)) {
+    return fetch(input, init);
+  }
+
+  let attempt = 0;
+  while (true) {
+    const response = await fetch(input, init);
+    if (!RETRYABLE_STATUS_CODES.has(response.status) || attempt >= maxRetries) {
+      return response;
+    }
+
+    let retryDelayMs: number | null = null;
+    if (response.status === 429) {
+      const quotaContext = await classifyQuotaResponse(response);
+      if (quotaContext?.terminal) {
+        return response;
+      }
+      retryDelayMs = quotaContext?.retryDelayMs ?? null;
+    }
+
+    const delayMs = await getRetryDelayMs(
+      response,
+      attempt,
+      baseDelayMs,
+      maxDelayMs,
+      retryDelayMs,
+    );
+    if (!delayMs || delayMs <= 0) {
+      return response;
+    }
+
+    if (init?.signal?.aborted) {
+      return response;
+    }
+
+    await wait(delayMs);
+    attempt += 1;
+  }
+}
+
+function canRetryRequest(init: RequestInit | undefined): boolean {
+  if (!init?.body) {
+    return true;
+  }
+
+  const body = init.body;
+  if (typeof body === "string") {
+    return true;
+  }
+  if (typeof URLSearchParams !== "undefined" && body instanceof URLSearchParams) {
+    return true;
+  }
+  if (typeof ArrayBuffer !== "undefined" && body instanceof ArrayBuffer) {
+    return true;
+  }
+  if (typeof ArrayBuffer !== "undefined" && ArrayBuffer.isView(body)) {
+    return true;
+  }
+  if (typeof Blob !== "undefined" && body instanceof Blob) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Resolves a retry delay from headers, body hints, or exponential backoff.
+ * Honors RetryInfo/Retry-After hints emitted by Code Assist.
+ */
+async function getRetryDelayMs(
+  response: Response,
+  attempt: number,
+  baseDelayMs: number,
+  maxDelayMs: number,
+  bodyDelayMs: number | null = null,
+): Promise<number | null> {
+  const headerDelayMs = parseRetryAfterMs(response.headers.get("retry-after-ms"));
+  if (headerDelayMs !== null) {
+    return clampDelay(headerDelayMs, maxDelayMs);
+  }
+
+  const retryAfter = parseRetryAfter(response.headers.get("retry-after"));
+  if (retryAfter !== null) {
+    return clampDelay(retryAfter, maxDelayMs);
+  }
+
+  const parsedBodyDelayMs = bodyDelayMs ?? (await parseRetryDelayFromBody(response));
+  if (parsedBodyDelayMs !== null) {
+    return clampDelay(parsedBodyDelayMs, maxDelayMs);
+  }
+
+  const fallback = baseDelayMs * Math.pow(2, attempt);
+  return clampDelay(fallback, maxDelayMs);
+}
+
+function clampDelay(delayMs: number, maxDelayMs: number): number {
+  if (!Number.isFinite(delayMs)) {
+    return maxDelayMs;
+  }
+  return Math.min(Math.max(0, delayMs), maxDelayMs);
+}
+
+function parseRetryAfterMs(value: string | null): number | null {
+  if (!value) {
+    return null;
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return null;
+  }
+  return parsed;
+}
+
+function parseRetryAfter(value: string | null): number | null {
+  if (!value) {
+    return null;
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const asNumber = Number(trimmed);
+  if (Number.isFinite(asNumber)) {
+    return Math.max(0, Math.round(asNumber * 1000));
+  }
+  const asDate = Date.parse(trimmed);
+  if (!Number.isNaN(asDate)) {
+    return Math.max(0, asDate - Date.now());
+  }
+  return null;
+}
+
+async function parseRetryDelayFromBody(response: Response): Promise<number | null> {
+  let text = "";
+  try {
+    text = await response.clone().text();
+  } catch {
+    return null;
+  }
+
+  if (!text) {
+    return null;
+  }
+
+  let parsed: any;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return null;
+  }
+
+  const details = parsed?.error?.details;
+  if (!Array.isArray(details)) {
+    const message = typeof parsed?.error?.message === "string" ? parsed.error.message : "";
+    return parseRetryDelayFromMessage(message);
+  }
+
+  for (const detail of details) {
+    if (!detail || typeof detail !== "object") {
+      continue;
+    }
+    const retryDelay = (detail as Record<string, unknown>).retryDelay;
+    if (!retryDelay) {
+      continue;
+    }
+    const delayMs = parseRetryDelayValue(retryDelay);
+    if (delayMs !== null) {
+      return delayMs;
+    }
+  }
+
+  const message = typeof parsed?.error?.message === "string" ? parsed.error.message : "";
+  return parseRetryDelayFromMessage(message);
+}
+
+function parseRetryDelayValue(value: unknown): number | null {
+  if (!value) {
+    return null;
+  }
+
+  if (typeof value === "string") {
+    const match = value.match(/^([\d.]+)s$/);
+    if (!match || !match[1]) {
+      return null;
+    }
+    const seconds = Number(match[1]);
+    if (!Number.isFinite(seconds) || seconds <= 0) {
+      return null;
+    }
+    return Math.round(seconds * 1000);
+  }
+
+  if (typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    const seconds = typeof record.seconds === "number" ? record.seconds : 0;
+    const nanos = typeof record.nanos === "number" ? record.nanos : 0;
+    if (!Number.isFinite(seconds) || !Number.isFinite(nanos)) {
+      return null;
+    }
+    const totalMs = Math.round(seconds * 1000 + nanos / 1e6);
+    return totalMs > 0 ? totalMs : null;
+  }
+
+  return null;
+}
+
+/**
+ * Parses retry delays embedded in error message strings (e.g., "Please retry in 5s").
+ */
+function parseRetryDelayFromMessage(message: string): number | null {
+  if (!message) {
+    return null;
+  }
+  const retryMatch = message.match(/Please retry in ([0-9.]+(?:ms|s))/);
+  if (retryMatch?.[1]) {
+    return parseRetryDelayValue(retryMatch[1]);
+  }
+  const afterMatch = message.match(/after\s+([0-9.]+(?:ms|s))/i);
+  if (afterMatch?.[1]) {
+    return parseRetryDelayValue(afterMatch[1]);
+  }
+  return null;
+}
+
+/**
+ * Classifies quota errors as terminal vs retryable and extracts retry hints.
+ * Matches Gemini CLI semantics: QUOTA_EXHAUSTED is terminal, RATE_LIMIT_EXCEEDED is retryable.
+ */
+async function classifyQuotaResponse(
+  response: Response,
+): Promise<{ terminal: boolean; retryDelayMs?: number } | null> {
+  let text = "";
+  try {
+    text = await response.clone().text();
+  } catch {
+    return null;
+  }
+
+  if (!text) {
+    return null;
+  }
+
+  let parsed: any;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return null;
+  }
+
+  const error = parsed?.error ?? {};
+  const details = Array.isArray(error?.details) ? error.details : [];
+  const retryDelayMs = parseRetryDelayFromMessage(error?.message ?? "") ?? undefined;
+
+  const errorInfo = details.find(
+    (detail: any) =>
+      detail &&
+      typeof detail === "object" &&
+      detail["@type"] === "type.googleapis.com/google.rpc.ErrorInfo",
+  );
+
+  if (errorInfo?.domain && !CLOUDCODE_DOMAINS.includes(errorInfo.domain)) {
+    return null;
+  }
+
+  if (errorInfo?.reason === "QUOTA_EXHAUSTED") {
+    return { terminal: true, retryDelayMs };
+  }
+  if (errorInfo?.reason === "RATE_LIMIT_EXCEEDED") {
+    return { terminal: false, retryDelayMs };
+  }
+
+  const quotaFailure = details.find(
+    (detail: any) =>
+      detail &&
+      typeof detail === "object" &&
+      detail["@type"] === "type.googleapis.com/google.rpc.QuotaFailure",
+  );
+
+  if (quotaFailure?.violations && Array.isArray(quotaFailure.violations)) {
+    const combined = quotaFailure.violations
+      .map((violation: any) => String(violation?.description ?? "").toLowerCase())
+      .join(" ");
+    if (combined.includes("daily") || combined.includes("per day")) {
+      return { terminal: true, retryDelayMs };
+    }
+    return { terminal: false, retryDelayMs };
+  }
+
+  return { terminal: false, retryDelayMs };
+}
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }
