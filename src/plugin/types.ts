@@ -1,4 +1,16 @@
+import type { ToolDefinition } from "@opencode-ai/plugin";
 import type { GeminiTokenExchangeResult } from "../gemini/oauth";
+
+export interface QuotaBucket {
+  resetTime: string;
+  tokenType: string;
+  modelId: string;
+  remainingFraction: number;
+}
+
+export interface RetrieveUserQuotaResponse {
+  buckets: QuotaBucket[];
+}
 
 export interface OAuthAuthDetails {
   type: "oauth";
@@ -62,6 +74,7 @@ export interface PluginResult {
     loader: (getAuth: GetAuth, provider: Provider) => Promise<LoaderResult | null>;
     methods: AuthMethod[];
   };
+  tool?: Record<string, ToolDefinition>;
 }
 
 export interface RefreshParts {

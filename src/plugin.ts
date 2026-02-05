@@ -19,6 +19,8 @@ import {
 } from "./plugin/request";
 import { refreshAccessToken } from "./plugin/token";
 import { startOAuthListener, type OAuthListener } from "./plugin/server";
+import { setGlobalState } from "./plugin/state";
+import { geminiQuota } from "./plugin/tools";
 import type {
   GetAuth,
   LoaderResult,
@@ -36,9 +38,13 @@ import type {
 export const GeminiCLIOAuthPlugin = async (
   { client }: PluginContext,
 ): Promise<PluginResult> => ({
+  tool: {
+    "gemini-quota": geminiQuota,
+  },
   auth: {
     provider: GEMINI_PROVIDER_ID,
     loader: async (getAuth: GetAuth, provider: Provider): Promise<LoaderResult | null> => {
+      setGlobalState(getAuth, provider, client);
       const auth = await getAuth();
       if (!isOAuthAuth(auth)) {
         return null;
