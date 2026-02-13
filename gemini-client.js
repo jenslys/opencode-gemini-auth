@@ -2,19 +2,22 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 
-// --- Constants from src/constants.ts ---
+// --- Constants ---
 const CLIENT_ID = "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com";
 const CLIENT_SECRET = "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";
 
-// --- Headers from src/constants.ts and src/plugin/request.ts ---
+// --- Headers ---
 const HEADERS = {
     "User-Agent": "google-api-nodejs-client/9.15.1",
     "X-Goog-Api-Client": "gl-node/22.17.0",
     "Client-Metadata": "ideType=IDE_UNSPECIFIED,platform=PLATFORM_UNSPECIFIED,pluginType=GEMINI",
 };
 
-// --- Helper to read auth file ---
-function getCredentials() {
+/**
+ * Retrieves Opencode credentials from the local filesystem.
+ * @returns {{refreshToken: string, projectId: string} | null}
+ */
+export function getCredentials() {
     const homeDir = os.homedir();
     // Path for Linux/macOS
     let authPath = path.join(homeDir, '.local', 'share', 'opencode', 'auth.json');
@@ -25,7 +28,7 @@ function getCredentials() {
     }
 
     if (!fs.existsSync(authPath)) {
-        console.error(`Auth file not found at: ${authPath}`);
+        console.warn(`Auth file not found at: ${authPath}`);
         return null;
     }
 
@@ -46,33 +49,48 @@ function getCredentials() {
     return null;
 }
 
-// --- Refresh Access Token ---
-async function refreshAccessToken(refreshToken) {
-    console.log("Refreshing Access Token...");
+/**
+ * Exchanges a refresh token for a short-lived access token.
+ * @param {string} refreshToken
+ * @returns {Promise<string|null>} The access token or null if failed.
+ */
+export async function refreshAccessToken(refreshToken) {
     const params = new URLSearchParams();
     params.append('client_id', CLIENT_ID);
     params.append('client_secret', CLIENT_SECRET);
     params.append('refresh_token', refreshToken);
     params.append('grant_type', 'refresh_token');
 
-    const response = await fetch("https://oauth2.googleapis.com/token", {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: params
-    });
+    try {
+        const response = await fetch("https://oauth2.googleapis.com/token", {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: params
+        });
 
-    if (!response.ok) {
-        const text = await response.text();
-        console.error("Failed to refresh token:", text);
+        if (!response.ok) {
+            const text = await response.text();
+            console.error("Failed to refresh token:", text);
+            return null;
+        }
+
+        const json = await response.json();
+        return json.access_token;
+    } catch (error) {
+        console.error("Network error during token refresh:", error);
         return null;
     }
-
-    const json = await response.json();
-    return json.access_token;
 }
 
-// --- Make Gemini Request ---
-async function generateContent(accessToken, projectId, textPrompt, imagePath = null) {
+/**
+ * Generates content using the hijacked Gemini session.
+ * @param {string} accessToken - Valid Google Cloud access token.
+ * @param {string} projectId - Google Cloud Project ID (from auth file).
+ * @param {string} textPrompt - The prompt to send.
+ * @param {string|null} imagePath - Optional path to an image file.
+ * @returns {Promise<string>} The generated text response.
+ */
+export async function generateContent(accessToken, projectId, textPrompt, imagePath = null) {
     // The internal endpoint used by the plugin
     const url = "https://cloudcode-pa.googleapis.com/v1internal:generateContent";
 
@@ -95,17 +113,15 @@ async function generateContent(accessToken, projectId, textPrompt, imagePath = n
                     data: base64Image
                 }
             });
-            console.log(`Included image: ${imagePath} (${mimeType})`);
         } catch (err) {
             console.error(`Error reading image file: ${err.message}`);
+            throw err;
         }
     }
 
     const requestBody = {
-        project: projectId, // This ensures it hits your specific project (Pro tier)
-        model: "gemini-pro-vision" || "gemini-1.5-pro-preview-0409", // Or just 'gemini-pro' for text
-        // Note: The plugin maps "gemini-2.5-flash-image" -> "gemini-2.5-flash" internally.
-        // For simplicity we use a known model name that supports vision if image is present.
+        project: projectId,
+        model: "gemini-pro-vision", // Or "gemini-1.5-pro-preview-0409"
         request: {
             contents: [{
                 role: "user",
@@ -124,8 +140,6 @@ async function generateContent(accessToken, projectId, textPrompt, imagePath = n
         "Content-Type": "application/json"
     };
 
-    console.log(`\nSending request to Cloud Code API (Project: ${projectId})...`);
-
     const response = await fetch(url, {
         method: "POST",
         headers: headers,
@@ -134,8 +148,7 @@ async function generateContent(accessToken, projectId, textPrompt, imagePath = n
 
     if (!response.ok) {
         const text = await response.text();
-        console.error(`Error ${response.status}: ${text}`);
-        return;
+        throw new Error(`API Error ${response.status}: ${text}`);
     }
 
     const json = await response.json();
@@ -144,37 +157,34 @@ async function generateContent(accessToken, projectId, textPrompt, imagePath = n
     if (json.candidates && json.candidates.length > 0) {
         const content = json.candidates[0].content;
         if (content && content.parts && content.parts.length > 0) {
-            console.log("\n--- Gemini Response ---");
-            console.log(content.parts[0].text);
-            return;
+            return content.parts[0].text;
         }
     }
 
-    console.log("Full Response:", JSON.stringify(json, null, 2));
+    throw new Error("No candidates returned: " + JSON.stringify(json));
 }
 
-// --- Main Execution ---
-async function main() {
-    const creds = getCredentials();
-    if (!creds) {
-        console.log("Could not find Opencode credentials. Run 'opencode auth login' first.");
-        return;
+// --- Default Helper Class for easier import ---
+export class GeminiSession {
+    constructor() {
+        this.creds = null;
+        this.accessToken = null;
     }
 
-    const accessToken = await refreshAccessToken(creds.refreshToken);
-    if (!accessToken) return;
+    async init() {
+        this.creds = getCredentials();
+        if (!this.creds) {
+            throw new Error("Opencode credentials not found. Please run `opencode auth login`.");
+        }
+        this.accessToken = await refreshAccessToken(this.creds.refreshToken);
+        if (!this.accessToken) {
+            throw new Error("Failed to refresh access token.");
+        }
+    }
 
-    // Example 1: Text only
-    // await generateContent(accessToken, creds.projectId, "Hello! Are you aware you are running outside of the plugin?");
-
-    // Example 2: With Image
-    // Replace 'example_image.png' with a real path to test
-    const imageFile = process.argv[2];
-    if (imageFile) {
-        await generateContent(accessToken, creds.projectId, "Describe this image in detail.", imageFile);
-    } else {
-        await generateContent(accessToken, creds.projectId, "Write a haiku about hacking code.");
+    async chat(prompt, imagePath = null) {
+        if (!this.accessToken) await this.init();
+        // Auto-refresh logic could be added here if token expires
+        return generateContent(this.accessToken, this.creds.projectId, prompt, imagePath);
     }
 }
-
-main();
