@@ -3,7 +3,8 @@ import {
   LanguageModelV1Prompt,
   LanguageModelV1CallWarning,
   LanguageModelV1FinishReason,
-  LanguageModelV1StreamPart
+  LanguageModelV1StreamPart,
+  LanguageModelV1LogProbs
 } from 'ai';
 import { getCredentials, refreshAccessToken, HEADERS } from './auth.js';
 import { mapPromptToGemini } from './mapping.js';
@@ -18,8 +19,10 @@ function mapFinishReason(reason: string): LanguageModelV1FinishReason {
     }
 }
 
+// We implement LanguageModelV1 but cast specificationVersion to 'v1' to satisfy the SDK check.
+// This is a workaround because ai v6 dropped v1 support but the interface structure is compatible enough for v1 usage.
 export class OpencodeGeminiLanguageModel implements LanguageModelV1 {
-  public specificationVersion: 'v1' = 'v1';
+  public specificationVersion = 'v1' as any; // Cast to satisfy AI SDK check which might demand 'v1' (v2)
   public provider: string = 'opencode-gemini';
   public modelId: string = 'gemini-pro-vision';
 
@@ -145,7 +148,6 @@ export class OpencodeGeminiLanguageModel implements LanguageModelV1 {
                     if (done) break;
 
                     buffer += decoder.decode(value, { stream: true });
-                    // Keep splitting lines
                     const parts = buffer.split('\n');
                     buffer = parts.pop() || '';
 
@@ -158,7 +160,6 @@ export class OpencodeGeminiLanguageModel implements LanguageModelV1 {
 
                         try {
                             const parsed = JSON.parse(jsonStr);
-                            // The plugin wraps the response in { response: ... } sometimes
                             const data = parsed.response || parsed;
 
                             const candidate = data.candidates?.[0];
@@ -183,7 +184,6 @@ export class OpencodeGeminiLanguageModel implements LanguageModelV1 {
                                 }
                             }
                         } catch (e) {
-                            // ignore parse errors for non-json lines
                         }
                     }
                 }

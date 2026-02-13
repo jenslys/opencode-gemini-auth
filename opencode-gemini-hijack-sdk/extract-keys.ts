@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { getCredentials, refreshAccessToken } from './auth.js';
+import { getCredentials, refreshAccessToken } from './src/auth.js';
 
 async function main() {
     console.log("Locating Opencode Google Auth credentials...");
