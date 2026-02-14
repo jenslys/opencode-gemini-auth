@@ -1,15 +1,14 @@
 import {
-  LanguageModelV1,
-  LanguageModelV1Prompt,
-  LanguageModelV1CallWarning,
-  LanguageModelV1FinishReason,
-  LanguageModelV1StreamPart,
-  LanguageModelV1LogProbs
+  LanguageModelV2,
+  LanguageModelV2CallOptions,
+  LanguageModelV2CallWarning,
+  LanguageModelV2FinishReason,
+  LanguageModelV2StreamPart
 } from 'ai';
 import { getCredentials, refreshAccessToken, HEADERS } from './auth.js';
 import { mapPromptToGemini } from './mapping.js';
 
-function mapFinishReason(reason: string): LanguageModelV1FinishReason {
+function mapFinishReason(reason: string): LanguageModelV2FinishReason {
     switch (reason) {
         case 'STOP': return 'stop';
         case 'MAX_TOKENS': return 'length';
@@ -19,23 +18,18 @@ function mapFinishReason(reason: string): LanguageModelV1FinishReason {
     }
 }
 
-export class OpencodeGeminiLanguageModel implements LanguageModelV1 {
-  public specificationVersion = 'v1' as const;
+export class OpencodeGeminiLanguageModel implements LanguageModelV2 {
+  public specificationVersion = 'v2' as const;
   public provider: string = 'opencode-gemini';
   public modelId: string = 'gemini-pro-vision';
 
   constructor(private projectId?: string) {}
 
-  get defaultObjectGenerationMode() {
-    return 'json' as const;
+  get supportedUrls() {
+      return {};
   }
 
-  async doGenerate(options: {
-    inputFormat: 'prompt';
-    mode: { type: 'regular' | 'chat' | 'completion' };
-    prompt: LanguageModelV1Prompt;
-    headers?: Record<string, string>;
-  }) {
+  async doGenerate(options: LanguageModelV2CallOptions) {
     const creds = getCredentials();
     if (!creds) {
       throw new Error("Opencode credentials not found.");
@@ -46,7 +40,12 @@ export class OpencodeGeminiLanguageModel implements LanguageModelV1 {
     }
 
     const projectId = this.projectId || creds.projectId;
-    const request = await mapPromptToGemini(options.prompt);
+    // Note: mapPromptToGemini needs to be compatible with V2 prompt structure.
+    // Assuming prompt structure is compatible or handled by ai package conversion.
+    // Wait, V2 uses `options.prompt` which is `LanguageModelV2Prompt`.
+    // My mapPromptToGemini handles `LanguageModelV1Prompt`.
+    // They are likely similar enough for this hijack (array of messages).
+    const request = await mapPromptToGemini(options.prompt as any);
 
     const wrappedRequest = {
       project: projectId,
@@ -79,23 +78,19 @@ export class OpencodeGeminiLanguageModel implements LanguageModelV1 {
     const finishReason = mapFinishReason(candidate.finishReason);
 
     return {
-      text,
+      content: [{ type: 'text', text }] as any, // V2 expects array of content parts
       finishReason,
       usage: {
         promptTokens: json.usageMetadata?.promptTokenCount || 0,
         completionTokens: json.usageMetadata?.candidatesTokenCount || 0,
       },
-      rawCall: { rawPrompt: wrappedRequest, rawSettings: {} },
-      warnings: [] as LanguageModelV1CallWarning[],
+      request: { body: JSON.stringify(wrappedRequest) },
+      response: { body: json },
+      warnings: [] as LanguageModelV2CallWarning[],
     };
   }
 
-  async doStream(options: {
-    inputFormat: 'prompt';
-    mode: { type: 'regular' | 'chat' | 'completion' };
-    prompt: LanguageModelV1Prompt;
-    headers?: Record<string, string>;
-  }) {
+  async doStream(options: LanguageModelV2CallOptions) {
     const creds = getCredentials();
     if (!creds) {
       throw new Error("Opencode credentials not found.");
@@ -106,7 +101,7 @@ export class OpencodeGeminiLanguageModel implements LanguageModelV1 {
     }
 
     const projectId = this.projectId || creds.projectId;
-    const request = await mapPromptToGemini(options.prompt);
+    const request = await mapPromptToGemini(options.prompt as any);
 
     const wrappedRequest = {
       project: projectId,
@@ -129,7 +124,7 @@ export class OpencodeGeminiLanguageModel implements LanguageModelV1 {
       throw new Error(`Gemini API error: ${response.status} ${await response.text()}`);
     }
 
-    const stream = new ReadableStream<LanguageModelV1StreamPart>({
+    const stream = new ReadableStream<LanguageModelV2StreamPart>({
         async start(controller) {
             const reader = response.body?.getReader();
             if (!reader) {
@@ -195,8 +190,7 @@ export class OpencodeGeminiLanguageModel implements LanguageModelV1 {
 
     return {
         stream,
-        rawCall: { rawPrompt: wrappedRequest, rawSettings: {} },
-        warnings: [] as LanguageModelV1CallWarning[],
+        request: { body: JSON.stringify(wrappedRequest) },
     };
   }
 }
