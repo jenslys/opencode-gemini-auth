@@ -19,17 +19,15 @@ function mapFinishReason(reason: string): LanguageModelV1FinishReason {
     }
 }
 
-// We implement LanguageModelV1 but cast specificationVersion to 'v1' to satisfy the SDK check.
-// This is a workaround because ai v6 dropped v1 support but the interface structure is compatible enough for v1 usage.
 export class OpencodeGeminiLanguageModel implements LanguageModelV1 {
-  public specificationVersion = 'v1' as any; // Cast to satisfy AI SDK check which might demand 'v1' (v2)
+  public specificationVersion = 'v1' as const;
   public provider: string = 'opencode-gemini';
   public modelId: string = 'gemini-pro-vision';
 
   constructor(private projectId?: string) {}
 
   get defaultObjectGenerationMode() {
-    return 'json';
+    return 'json' as const;
   }
 
   async doGenerate(options: {

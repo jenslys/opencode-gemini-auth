@@ -1,23 +1,7 @@
 {
-  "name": "opencode-gemini-auth",
-  "module": "index.ts",
-  "version": "1.3.10",
-  "author": "jenslys",
-  "repository": "https://github.com/jenslys/opencode-gemini-auth",
-  "files": [
-    "index.ts",
-    "src"
-  ],
-  "license": "MIT",
+  "name": "opencode-gemini-auth-hijack",
+  "version": "1.0.0",
+  "description": "Hijack Opencode Gemini session",
   "type": "module",
-  "devDependencies": {
-    "@opencode-ai/plugin": "^1.1.48",
-    "@types/bun": "latest"
-  },
-  "peerDependencies": {
-    "typescript": "^5.9.3"
-  },
-  "dependencies": {
-    "@openauthjs/openauth": "^0.4.3"
-  }
+  "dependencies": {}
 }

@@ -12,8 +12,8 @@
     "typescript": "^5.0.0"
   },
   "dependencies": {
-    "ai": "^6.0.86",
-    "zod": "^4.3.6"
+    "ai": "^3.4.0",
+    "zod": "^3.23.8"
   },
   "bin": {
     "extract-keys": "./extract-keys.ts"
