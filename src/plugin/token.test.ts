@@ -71,4 +71,35 @@ describe("refreshAccessToken", () => {
       }),
     });
   });
+
+  it("deduplicates concurrent refresh calls for the same refresh token", async () => {
+    const client = createClient();
+    let releaseFetch!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseFetch = resolve;
+    });
+
+    const fetchMock = mock(async () => {
+      await gate;
+      return new Response(
+        JSON.stringify({
+          access_token: "deduped-access",
+          expires_in: 3600,
+        }),
+        { status: 200 },
+      );
+    });
+    (globalThis as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
+
+    const first = refreshAccessToken(baseAuth, client);
+    const second = refreshAccessToken(baseAuth, client);
+    await Promise.resolve();
+
+    expect(fetchMock.mock.calls.length).toBe(1);
+    releaseFetch();
+
+    const [firstResult, secondResult] = await Promise.all([first, second]);
+    expect(firstResult?.access).toBe("deduped-access");
+    expect(secondResult?.access).toBe("deduped-access");
+  });
 });

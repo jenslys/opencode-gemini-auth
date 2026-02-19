@@ -24,6 +24,8 @@ interface OAuthErrorPayload {
   error_description?: string;
 }
 
+const refreshInFlight = new Map<string, Promise<OAuthAuthDetails | undefined>>();
+
 /**
  * Parses OAuth error payloads returned by Google token endpoints, tolerating varied shapes.
  */
@@ -75,6 +77,26 @@ export async function refreshAccessToken(
     return undefined;
   }
 
+  const pending = refreshInFlight.get(parts.refreshToken);
+  if (pending) {
+    return pending;
+  }
+
+  const refreshPromise = refreshAccessTokenInternal(auth, client, parts);
+  refreshInFlight.set(parts.refreshToken, refreshPromise);
+
+  try {
+    return await refreshPromise;
+  } finally {
+    refreshInFlight.delete(parts.refreshToken);
+  }
+}
+
+async function refreshAccessTokenInternal(
+  auth: OAuthAuthDetails,
+  client: PluginClient,
+  parts: RefreshParts,
+): Promise<OAuthAuthDetails | undefined> {
   try {
     if (isGeminiDebugEnabled()) {
       logGeminiDebugMessage("OAuth refresh: POST https://oauth2.googleapis.com/token");
@@ -118,6 +140,7 @@ export async function refreshAccessToken(
         console.warn(
           "[Gemini OAuth] Google revoked the stored refresh token. Run `opencode auth login` and reauthenticate the Google provider.",
         );
+        clearCachedAuth(auth.refresh);
         invalidateProjectContextCache(auth.refresh);
         try {
           const clearedAuth: OAuthAuthDetails = {
@@ -165,6 +188,7 @@ export async function refreshAccessToken(
       refresh: formatRefreshParts(refreshedParts),
     };
 
+    clearCachedAuth(auth.refresh);
     storeCachedAuth(updatedAuth);
     invalidateProjectContextCache(auth.refresh);
 
