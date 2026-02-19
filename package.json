@@ -10,6 +10,9 @@
   ],
   "license": "MIT",
   "type": "module",
+  "scripts": {
+    "update:gemini-cli": "git -C .local/gemini-cli pull --ff-only"
+  },
   "devDependencies": {
     "@opencode-ai/plugin": "^1.1.48",
     "@types/bun": "latest"

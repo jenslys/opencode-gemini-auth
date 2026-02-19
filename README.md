@@ -214,6 +214,24 @@ the same behavior patterns as the Gemini CLI.
 - Gemini CLI repository: https://github.com/google-gemini/gemini-cli
 - Gemini CLI quota documentation: https://developers.google.com/gemini-code-assist/resources/quotas
 
+### Local upstream mirror (optional)
+
+For local parity checks, you can keep a separate clone of the official
+`gemini-cli` in this repo at `.local/gemini-cli`.
+
+This mirror is intentionally untracked, so contributors must set it up once on
+their machine:
+
+```bash
+git clone https://github.com/google-gemini/gemini-cli.git .local/gemini-cli
+```
+
+After setup, pull upstream updates with:
+
+```bash
+bun run update:gemini-cli
+```
+
 ### Updating
 
 Opencode does not automatically update plugins. To update to the latest version,
