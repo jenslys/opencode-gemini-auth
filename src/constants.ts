@@ -30,7 +30,7 @@ export const GEMINI_CODE_ASSIST_ENDPOINT = "https://cloudcode-pa.googleapis.com"
 export const CODE_ASSIST_HEADERS = {
   "User-Agent": "google-api-nodejs-client/9.15.1",
   "X-Goog-Api-Client": "gl-node/22.17.0",
-  "Client-Metadata": "ideType=IDE_UNSPECIFIED,platform=PLATFORM_UNSPECIFIED,pluginType=GEMINI",
+  "Client-Metadata": "ideType=IDE_UNSPECIFIED,platform=PLATFORM_UNSPECIFIED,pluginType=GEMINI,updateChannel=PREVIEW",
 } as const;
 
 /**

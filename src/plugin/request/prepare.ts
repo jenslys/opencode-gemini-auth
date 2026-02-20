@@ -9,6 +9,9 @@ import { isGenerativeLanguageRequest, toRequestUrlString } from "./shared";
 const STREAM_ACTION = "streamGenerateContent";
 const MODEL_FALLBACKS: Record<string, string> = {
   "gemini-2.5-flash-image": "gemini-2.5-flash",
+  "gemini-3.1-pro-preview": "gemini-3-pro-preview",
+  "gemini-3.1-flash-preview": "gemini-3-flash-preview",
+  "gemini-3.1-pro-preview-customtools": "gemini-3-pro-preview",
 };
 
 /**
