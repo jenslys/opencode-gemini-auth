@@ -4,6 +4,7 @@ import {
   FREE_TIER_ID,
   type LoadCodeAssistPayload,
   type OnboardUserPayload,
+  type RetrieveUserQuotaResponse,
   ProjectIdRequiredError,
 } from "./types";
 import { buildMetadata, isVpcScError, parseJsonSafe, wait } from "./utils";
@@ -129,14 +130,6 @@ export async function onboardManagedProject(
   }
 
   return undefined;
-}
-
-interface RetrieveUserQuotaBucket {
-  modelId?: string;
-}
-
-interface RetrieveUserQuotaResponse {
-  buckets?: RetrieveUserQuotaBucket[];
 }
 
 /**

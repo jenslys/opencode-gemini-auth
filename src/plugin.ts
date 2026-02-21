@@ -3,6 +3,10 @@ import { createOAuthAuthorizeMethod } from "./plugin/oauth-authorize";
 import { accessTokenExpired, isOAuthAuth } from "./plugin/auth";
 import { resolveCachedAuth } from "./plugin/cache";
 import { ensureProjectContext, retrieveUserQuota } from "./plugin/project";
+import {
+  createGeminiQuotaTool,
+  GEMINI_QUOTA_TOOL_NAME,
+} from "./plugin/quota";
 import { isGeminiDebugEnabled, logGeminiDebugMessage, startGeminiDebugRequest } from "./plugin/debug";
 import {
   isGenerativeLanguageRequest,
@@ -21,6 +25,15 @@ import type {
   Provider,
 } from "./plugin/types";
 
+const GEMINI_QUOTA_COMMAND = "gquota";
+const GEMINI_QUOTA_COMMAND_TEMPLATE = `Retrieve Gemini Code Assist quota usage for the current authenticated account.
+
+Immediately call \`${GEMINI_QUOTA_TOOL_NAME}\` with no arguments and return its output verbatim.
+Do not call other tools.
+`;
+let latestGeminiAuthResolver: GetAuth | undefined;
+let latestGeminiConfiguredProjectId: string | undefined;
+
 /**
  * Registers the Gemini OAuth provider for Opencode, handling auth, request rewriting,
  * debug logging, and response normalization for Gemini Code Assist endpoints.
@@ -28,15 +41,31 @@ import type {
 export const GeminiCLIOAuthPlugin = async (
   { client }: PluginContext,
 ): Promise<PluginResult> => ({
+  config: async (config) => {
+    config.command = config.command || {};
+    config.command[GEMINI_QUOTA_COMMAND] = {
+      description: "Show Gemini Code Assist quota usage",
+      template: GEMINI_QUOTA_COMMAND_TEMPLATE,
+    };
+  },
+  tool: {
+    [GEMINI_QUOTA_TOOL_NAME]: createGeminiQuotaTool({
+      client,
+      getAuthResolver: () => latestGeminiAuthResolver,
+      getConfiguredProjectId: () => latestGeminiConfiguredProjectId,
+    }),
+  },
   auth: {
     provider: GEMINI_PROVIDER_ID,
     loader: async (getAuth: GetAuth, provider: Provider): Promise<LoaderResult | null> => {
+      latestGeminiAuthResolver = getAuth;
       const auth = await getAuth();
       if (!isOAuthAuth(auth)) {
         return null;
       }
 
       const configuredProjectId = resolveConfiguredProjectId(provider);
+      latestGeminiConfiguredProjectId = configuredProjectId;
       normalizeProviderModelCosts(provider);
 
       return {

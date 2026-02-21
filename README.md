@@ -47,6 +47,12 @@ Add the plugin to your Opencode configuration file
 
 Once authenticated, Opencode will use your Google account for Gemini requests.
 
+To check your current Gemini Code Assist quota buckets at any time, run:
+
+```bash
+/gquota
+```
+
 ## Configuration
 
 ### Google Cloud Project

@@ -1,4 +1,6 @@
 import type { GeminiTokenExchangeResult } from "../gemini/oauth";
+import type { Config } from "@opencode-ai/sdk";
+import type { ToolDefinition } from "@opencode-ai/plugin";
 
 export interface OAuthAuthDetails {
   type: "oauth";
@@ -57,6 +59,8 @@ export interface PluginContext {
 }
 
 export interface PluginResult {
+  config?: (config: Config) => Promise<void>;
+  tool?: Record<string, ToolDefinition>;
   auth: {
     provider: string;
     loader: (getAuth: GetAuth, provider: Provider) => Promise<LoaderResult | null>;

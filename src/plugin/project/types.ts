@@ -43,6 +43,18 @@ export interface OnboardUserPayload {
   };
 }
 
+export interface RetrieveUserQuotaBucket {
+  remainingAmount?: string;
+  remainingFraction?: number;
+  resetTime?: string;
+  tokenType?: string;
+  modelId?: string;
+}
+
+export interface RetrieveUserQuotaResponse {
+  buckets?: RetrieveUserQuotaBucket[];
+}
+
 /**
  * Error raised when a required Google Cloud project is missing during Gemini onboarding.
  */
