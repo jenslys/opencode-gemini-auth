@@ -6,9 +6,9 @@
       "name": "opencode-gemini-auth",
       "dependencies": {
         "@openauthjs/openauth": "^0.4.3",
+        "@opencode-ai/plugin": "^1.2.10",
       },
       "devDependencies": {
-        "@opencode-ai/plugin": "^1.1.48",
         "@types/bun": "latest",
       },
       "peerDependencies": {
