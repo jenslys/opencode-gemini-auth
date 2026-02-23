@@ -132,11 +132,15 @@ export async function exchangeGeminiWithVerifier(
   );
   exchangeInFlight.set(exchangeKey, exchangePromise);
 
+  let exchangeResult: GeminiTokenExchangeResult | undefined;
   try {
-    return await exchangePromise;
+    exchangeResult = await exchangePromise;
+    return exchangeResult;
   } finally {
     exchangeInFlight.delete(exchangeKey);
-    consumedExchanges.set(exchangeKey, Date.now());
+    if (exchangeResult?.type === "success") {
+      consumedExchanges.set(exchangeKey, Date.now());
+    }
     pruneConsumedExchanges();
   }
 }
