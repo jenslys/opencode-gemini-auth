@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto";
 
 import { CODE_ASSIST_HEADERS, GEMINI_CODE_ASSIST_ENDPOINT } from "../../constants";
+import { isGeminiDebugEnabled, logGeminiDebugMessage } from "../debug";
 import { normalizeThinkingConfig } from "../request-helpers";
 import { normalizeRequestPayloadIdentifiers, normalizeWrappedIdentifiers } from "./identifiers";
 import { addThoughtSignaturesToFunctionCalls, transformOpenAIToolCalls } from "./openai";
+import { normalizeVertexFunctionDeclarationSchemas } from "./schema";
 import { isGenerativeLanguageRequest, toRequestUrlString } from "./shared";
 
 const STREAM_ACTION = "streamGenerateContent";
@@ -106,6 +108,17 @@ function transformRequestBody(
         ...parsedBody,
         model: effectiveModel,
       } as Record<string, unknown>;
+      const wrappedRequest = wrappedBody.request;
+      if (wrappedRequest && typeof wrappedRequest === "object") {
+        const violations = normalizeVertexFunctionDeclarationSchemas(
+          wrappedRequest as Record<string, unknown>,
+        );
+        if (violations.length > 0 && isGeminiDebugEnabled()) {
+          logGeminiDebugMessage(
+            `Schema normalization warnings: ${violations.slice(0, 5).join("; ")}`,
+          );
+        }
+      }
       const { userPromptId } = normalizeWrappedIdentifiers(wrappedBody);
       return { body: JSON.stringify(wrappedBody), userPromptId };
     }
@@ -116,6 +129,10 @@ function transformRequestBody(
     normalizeThinking(requestPayload);
     normalizeSystemInstruction(requestPayload);
     normalizeCachedContent(requestPayload);
+    const violations = normalizeVertexFunctionDeclarationSchemas(requestPayload);
+    if (violations.length > 0 && isGeminiDebugEnabled()) {
+      logGeminiDebugMessage(`Schema normalization warnings: ${violations.slice(0, 5).join("; ")}`);
+    }
 
     if ("model" in requestPayload) {
       delete requestPayload.model;

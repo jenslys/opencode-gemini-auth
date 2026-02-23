@@ -88,4 +88,64 @@ describe("request helpers", () => {
     expect(payload).toContain('"responseId":"trace-456"');
     expect(payload).not.toContain('"traceId"');
   });
+
+  it("normalizes anyOf schema nodes in function declarations", () => {
+    const input =
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:streamGenerateContent";
+    const init: RequestInit = {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        contents: [{ role: "user", parts: [{ text: "hi" }] }],
+        tools: [
+          {
+            functionDeclarations: [
+              {
+                name: "edit",
+                parameters: {
+                  type: "object",
+                  properties: {
+                    edits: {
+                      description: "Array of edits",
+                      anyOf: [
+                        { type: "array", items: { type: "string" } },
+                        { type: "null" },
+                      ],
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        ],
+      }),
+    };
+
+    const result = prepareGeminiRequest(input, init, "token-123", "project-456");
+    const wrapped = JSON.parse(result.init.body as string) as {
+      request: {
+        tools: Array<{
+          functionDeclarations: Array<{
+            parameters: {
+              properties: {
+                edits: Record<string, unknown>;
+              };
+            };
+          }>;
+        }>;
+      };
+    };
+
+    const editsSchema =
+      wrapped.request.tools[0]?.functionDeclarations[0]?.parameters.properties.edits;
+    expect(editsSchema).toBeDefined();
+    if (!editsSchema) {
+      throw new Error("Expected edits schema to be present");
+    }
+    expect(editsSchema.anyOf).toBeDefined();
+    expect(editsSchema.description).toBeUndefined();
+    expect(editsSchema.type).toBeUndefined();
+  });
 });
