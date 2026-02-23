@@ -2,6 +2,8 @@ import { isRecord } from "./shared";
 
 type JsonRecord = Record<string, unknown>;
 
+const ANY_OF_DEFINITION_KEYS = new Set(["$defs", "defs", "definitions"]);
+
 export function normalizeVertexFunctionDeclarationSchemas(requestPayload: JsonRecord): string[] {
   const tools = requestPayload.tools;
   if (!Array.isArray(tools)) {
@@ -70,7 +72,9 @@ function collectAnyOfSiblingViolationsInternal(
 
   const hasAnyOf = Array.isArray(node.anyOf) || Array.isArray(node.any_of);
   if (hasAnyOf) {
-    const siblingKeys = Object.keys(node).filter((key) => key !== "anyOf" && key !== "any_of");
+    const siblingKeys = Object.keys(node).filter(
+      (key) => key !== "anyOf" && key !== "any_of" && !ANY_OF_DEFINITION_KEYS.has(key),
+    );
     if (siblingKeys.length > 0) {
       issues.push(`${path} (extra keys: ${siblingKeys.join(",")})`);
     }
@@ -108,10 +112,17 @@ function normalizeSchemaAnyOfNodes(schema: unknown): unknown {
 
   if (anyOf) {
     const normalizedAnyOf = anyOf.map((branch) => normalizeSchemaAnyOfNodes(branch));
+    const preservedDefinitions = readAnyOfDefinitionSiblings(schema);
     if (Array.isArray(schema.any_of) && !Array.isArray(schema.anyOf)) {
-      return { any_of: normalizedAnyOf };
+      return {
+        any_of: normalizedAnyOf,
+        ...preservedDefinitions,
+      };
     }
-    return { anyOf: normalizedAnyOf };
+    return {
+      anyOf: normalizedAnyOf,
+      ...preservedDefinitions,
+    };
   }
 
   const normalized: JsonRecord = {};
@@ -119,4 +130,15 @@ function normalizeSchemaAnyOfNodes(schema: unknown): unknown {
     normalized[key] = normalizeSchemaAnyOfNodes(value);
   }
   return normalized;
+}
+
+function readAnyOfDefinitionSiblings(schema: JsonRecord): JsonRecord {
+  const preserved: JsonRecord = {};
+  for (const key of ANY_OF_DEFINITION_KEYS) {
+    if (!(key in schema)) {
+      continue;
+    }
+    preserved[key] = normalizeSchemaAnyOfNodes(schema[key]);
+  }
+  return preserved;
 }
