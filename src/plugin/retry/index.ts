@@ -57,11 +57,9 @@ export async function fetchWithRetry(
     }
 
     const delayMs = await resolveRetryDelayMs(response, attempt, quotaContext?.retryDelayMs);
-    if (delayMs <= 0) {
-      return response;
+    if (delayMs > 0) {
+      await wait(delayMs);
     }
-
-    await wait(delayMs);
     attempt += 1;
   }
 

@@ -11,6 +11,14 @@ import {
   logGeminiDebugMessage,
 } from "./debug";
 import { invalidateProjectContextCache } from "./project";
+import {
+  DEFAULT_MAX_ATTEMPTS,
+  getExponentialDelayWithJitter,
+  isRetryableNetworkError,
+  isRetryableStatus,
+  resolveRetryDelayMs,
+  wait,
+} from "./retry/helpers";
 import type { OAuthAuthDetails, PluginClient, RefreshParts } from "./types";
 
 interface OAuthErrorPayload {
@@ -98,21 +106,7 @@ async function refreshAccessTokenInternal(
   parts: RefreshParts,
 ): Promise<OAuthAuthDetails | undefined> {
   try {
-    if (isGeminiDebugEnabled()) {
-      logGeminiDebugMessage("OAuth refresh: POST https://oauth2.googleapis.com/token");
-    }
-    const response = await fetch("https://oauth2.googleapis.com/token", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
-      body: new URLSearchParams({
-        grant_type: "refresh_token",
-        refresh_token: parts.refreshToken,
-        client_id: GEMINI_CLIENT_ID,
-        client_secret: GEMINI_CLIENT_SECRET,
-      }),
-    });
+    const response = await fetchTokenRefresh(parts.refreshToken);
 
     if (!response.ok) {
       let errorText: string | undefined;
@@ -208,4 +202,49 @@ async function refreshAccessTokenInternal(
     console.error("Failed to refresh Gemini access token due to an unexpected error:", error);
     return undefined;
   }
+}
+
+async function fetchTokenRefresh(refreshToken: string): Promise<Response> {
+  const tokenUrl = "https://oauth2.googleapis.com/token";
+  const init: RequestInit = {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: new URLSearchParams({
+      grant_type: "refresh_token",
+      refresh_token: refreshToken,
+      client_id: GEMINI_CLIENT_ID,
+      client_secret: GEMINI_CLIENT_SECRET,
+    }),
+  };
+
+  let attempt = 1;
+  while (attempt <= DEFAULT_MAX_ATTEMPTS) {
+    if (isGeminiDebugEnabled()) {
+      logGeminiDebugMessage(`OAuth refresh attempt ${attempt}: POST ${tokenUrl}`);
+    }
+
+    try {
+      const response = await fetch(tokenUrl, init);
+      if (!isRetryableStatus(response.status) || attempt >= DEFAULT_MAX_ATTEMPTS) {
+        return response;
+      }
+
+      const delayMs = await resolveRetryDelayMs(response, attempt);
+      if (delayMs > 0) {
+        await wait(delayMs);
+      }
+      attempt += 1;
+      continue;
+    } catch (error) {
+      if (attempt >= DEFAULT_MAX_ATTEMPTS || !isRetryableNetworkError(error)) {
+        throw error;
+      }
+      await wait(getExponentialDelayWithJitter(attempt));
+      attempt += 1;
+    }
+  }
+
+  return fetch(tokenUrl, init);
 }

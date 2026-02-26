@@ -95,6 +95,27 @@ describe("fetchWithRetry", () => {
     expect(response.status).toBe(429);
     expect(fetchMock.mock.calls.length).toBe(1);
   });
+
+  it("retries immediately when server returns Retry-After: 0", async () => {
+    const fetchMock = mock(async () => {
+      if (fetchMock.mock.calls.length === 1) {
+        return new Response("rate limited", {
+          status: 429,
+          headers: { "retry-after": "0" },
+        });
+      }
+      return new Response("ok", { status: 200 });
+    });
+    (globalThis as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
+
+    const response = await fetchWithRetry("https://example.com", {
+      method: "POST",
+      body: JSON.stringify({ hello: "world" }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(fetchMock.mock.calls.length).toBe(2);
+  });
 });
 
 describe("retryInternals", () => {
