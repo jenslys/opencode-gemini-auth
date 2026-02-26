@@ -1,5 +1,5 @@
 import { generatePKCE } from "@openauthjs/openauth/pkce";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 
 import {
   GEMINI_CLIENT_ID,
@@ -54,6 +54,10 @@ interface GeminiUserInfo {
   email?: string;
 }
 
+const AUTHORIZATION_CODE_REPLAY_TTL_MS = 10 * 60 * 1000;
+const exchangeInFlight = new Map<string, Promise<GeminiTokenExchangeResult>>();
+const consumedExchanges = new Map<string, number>();
+
 /**
  * Build the Gemini OAuth authorization URL including PKCE.
  */
@@ -71,8 +75,6 @@ export async function authorizeGemini(): Promise<GeminiAuthorization> {
   url.searchParams.set("state", state);
   url.searchParams.set("access_type", "offline");
   url.searchParams.set("prompt", "consent");
-  // Add a fragment so any stray terminal glyphs are ignored by the auth server.
-  url.hash = "opencode";
 
   return {
     url: url.toString(),
@@ -88,13 +90,58 @@ export async function exchangeGeminiWithVerifier(
   code: string,
   verifier: string,
 ): Promise<GeminiTokenExchangeResult> {
-  try {
-    return await exchangeGeminiWithVerifierInternal(code, verifier);
-  } catch (error) {
+  const normalizedCode = typeof code === "string" ? code.trim() : "";
+  const normalizedVerifier = typeof verifier === "string" ? verifier.trim() : "";
+  if (isGeminiDebugEnabled() && (typeof code !== "string" || typeof verifier !== "string")) {
+    logGeminiDebugMessage(
+      `OAuth exchange received non-string inputs: code=${typeof code} verifier=${typeof verifier}`,
+    );
+  }
+  if (!normalizedCode) {
     return {
       type: "failed",
-      error: error instanceof Error ? error.message : "Unknown error",
+      error: "Missing authorization code in exchange request",
     };
+  }
+  if (!normalizedVerifier) {
+    return {
+      type: "failed",
+      error: "Missing PKCE verifier for OAuth exchange",
+    };
+  }
+
+  pruneConsumedExchanges();
+  const exchangeKey = buildExchangeKey(normalizedCode, normalizedVerifier);
+  if (consumedExchanges.has(exchangeKey)) {
+    return {
+      type: "failed",
+      error: "Authorization code was already submitted. Start a new login flow.",
+    };
+  }
+
+  const pending = exchangeInFlight.get(exchangeKey);
+  if (pending) {
+    return pending;
+  }
+
+  const exchangePromise = exchangeGeminiWithVerifierInternal(normalizedCode, normalizedVerifier).catch(
+    (error): GeminiTokenExchangeResult => ({
+      type: "failed",
+      error: error instanceof Error ? error.message : "Unknown error",
+    }),
+  );
+  exchangeInFlight.set(exchangeKey, exchangePromise);
+
+  let exchangeResult: GeminiTokenExchangeResult | undefined;
+  try {
+    exchangeResult = await exchangePromise;
+    return exchangeResult;
+  } finally {
+    exchangeInFlight.delete(exchangeKey);
+    if (exchangeResult?.type === "success") {
+      consumedExchanges.set(exchangeKey, Date.now());
+    }
+    pruneConsumedExchanges();
   }
 }
 
@@ -104,6 +151,7 @@ async function exchangeGeminiWithVerifierInternal(
 ): Promise<GeminiTokenExchangeResult> {
   if (isGeminiDebugEnabled()) {
     logGeminiDebugMessage("OAuth exchange: POST https://oauth2.googleapis.com/token");
+    logGeminiDebugMessage(`OAuth exchange code fingerprint: ${fingerprint(code)} len=${code.length}`);
   }
   const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
@@ -174,4 +222,20 @@ async function exchangeGeminiWithVerifierInternal(
     expires: Date.now() + tokenPayload.expires_in * 1000,
     email: userInfo.email,
   };
+}
+
+function buildExchangeKey(code: string, verifier: string): string {
+  return createHash("sha256").update(code).update("\u0000").update(verifier).digest("hex");
+}
+
+function pruneConsumedExchanges(now = Date.now()): void {
+  for (const [key, consumedAt] of consumedExchanges.entries()) {
+    if (now - consumedAt > AUTHORIZATION_CODE_REPLAY_TTL_MS) {
+      consumedExchanges.delete(key);
+    }
+  }
+}
+
+function fingerprint(value: string): string {
+  return createHash("sha256").update(value).digest("hex").slice(0, 12);
 }
