@@ -1,5 +1,6 @@
 import { CODE_ASSIST_HEADERS, GEMINI_CODE_ASSIST_ENDPOINT } from "../../constants";
 import { logGeminiDebugResponse, startGeminiDebugRequest } from "../debug";
+import { buildGeminiCliUserAgent } from "../user-agent";
 import {
   FREE_TIER_ID,
   type LoadCodeAssistPayload,
@@ -27,6 +28,7 @@ export async function loadManagedProject(
     const headers = {
       "Content-Type": "application/json",
       Authorization: `Bearer ${accessToken}`,
+      "User-Agent": buildGeminiCliUserAgent(),
       ...CODE_ASSIST_HEADERS,
     };
     const debugContext = startGeminiDebugRequest({
@@ -92,6 +94,7 @@ export async function onboardManagedProject(
   const headers = {
     "Content-Type": "application/json",
     Authorization: `Bearer ${accessToken}`,
+    "User-Agent": buildGeminiCliUserAgent(),
     ...CODE_ASSIST_HEADERS,
   };
 
@@ -143,6 +146,7 @@ export async function retrieveUserQuota(
   const headers = {
     "Content-Type": "application/json",
     Authorization: `Bearer ${accessToken}`,
+    "User-Agent": buildGeminiCliUserAgent(),
     ...CODE_ASSIST_HEADERS,
   };
 

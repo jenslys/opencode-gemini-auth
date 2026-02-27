@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { CODE_ASSIST_HEADERS, GEMINI_CODE_ASSIST_ENDPOINT } from "../../constants";
 import { normalizeThinkingConfig } from "../request-helpers";
+import { buildGeminiCliUserAgent } from "../user-agent";
 import { normalizeRequestPayloadIdentifiers, normalizeWrappedIdentifiers } from "./identifiers";
 import { addThoughtSignaturesToFunctionCalls, transformOpenAIToolCalls } from "./openai";
 import { isGenerativeLanguageRequest, toRequestUrlString } from "./shared";
@@ -38,6 +39,7 @@ export function prepareGeminiRequest(
 
   headers.set("Authorization", `Bearer ${accessToken}`);
   headers.delete("x-api-key");
+  headers.delete("x-goog-api-key");
 
   const match = toRequestUrlString(input).match(/\/models\/([^:]+):(\w+)/);
   if (!match) {
@@ -70,7 +72,7 @@ export function prepareGeminiRequest(
     headers.set("Accept", "text/event-stream");
   }
 
-  headers.set("User-Agent", CODE_ASSIST_HEADERS["User-Agent"]);
+  headers.set("User-Agent", buildGeminiCliUserAgent(effectiveModel));
   headers.set("X-Goog-Api-Client", CODE_ASSIST_HEADERS["X-Goog-Api-Client"]);
   headers.set("Client-Metadata", CODE_ASSIST_HEADERS["Client-Metadata"]);
   /**
