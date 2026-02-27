@@ -23,6 +23,7 @@ interface GoogleRpcRetryInfo {
 export interface QuotaContext {
   terminal: boolean;
   retryDelayMs?: number;
+  reason?: string;
 }
 
 const CLOUDCODE_DOMAINS = new Set([
@@ -65,10 +66,17 @@ export async function classifyQuotaResponse(response: Response): Promise<QuotaCo
     return null;
   }
   if (errorInfo?.reason === "QUOTA_EXHAUSTED") {
-    return { terminal: true, retryDelayMs };
+    return { terminal: true, retryDelayMs, reason: errorInfo.reason };
   }
   if (errorInfo?.reason === "RATE_LIMIT_EXCEEDED") {
-    return { terminal: false, retryDelayMs: retryDelayMs ?? 10_000 };
+    return { terminal: false, retryDelayMs: retryDelayMs ?? 10_000, reason: errorInfo.reason };
+  }
+  if (errorInfo?.reason === "MODEL_CAPACITY_EXHAUSTED") {
+    return {
+      terminal: retryDelayMs === undefined,
+      retryDelayMs,
+      reason: errorInfo.reason,
+    };
   }
 
   const quotaFailure = details.find(
@@ -83,20 +91,20 @@ export async function classifyQuotaResponse(response: Response): Promise<QuotaCo
       .toLowerCase();
 
     if (allTexts.includes("perday") || allTexts.includes("daily") || allTexts.includes("per day")) {
-      return { terminal: true, retryDelayMs };
+      return { terminal: true, retryDelayMs, reason: errorInfo?.reason };
     }
     if (allTexts.includes("perminute") || allTexts.includes("per minute")) {
-      return { terminal: false, retryDelayMs: retryDelayMs ?? 60_000 };
+      return { terminal: false, retryDelayMs: retryDelayMs ?? 60_000, reason: errorInfo?.reason };
     }
-    return { terminal: false, retryDelayMs };
+    return { terminal: false, retryDelayMs, reason: errorInfo?.reason };
   }
 
   const quotaLimit = errorInfo?.metadata?.quota_limit?.toLowerCase() ?? "";
   if (quotaLimit.includes("perminute") || quotaLimit.includes("per minute")) {
-    return { terminal: false, retryDelayMs: retryDelayMs ?? 60_000 };
+    return { terminal: false, retryDelayMs: retryDelayMs ?? 60_000, reason: errorInfo?.reason };
   }
 
-  return { terminal: false, retryDelayMs };
+  return { terminal: false, retryDelayMs, reason: errorInfo?.reason };
 }
 
 /**
@@ -191,17 +199,28 @@ async function parseErrorBody(
     return null;
   }
 
-  if (!isObject(parsed) || !isObject(parsed.error)) {
+  const normalized = normalizeErrorEnvelope(parsed);
+  if (!normalized || !isObject(normalized.error)) {
     return null;
   }
+
+  const error = normalized.error as Record<string, unknown>;
   return {
-    message: typeof parsed.error.message === "string" ? parsed.error.message : undefined,
-    details: Array.isArray(parsed.error.details) ? parsed.error.details : undefined,
+    message: typeof error.message === "string" ? error.message : undefined,
+    details: Array.isArray(error.details) ? error.details : undefined,
   };
 }
 
 function isObject(value: unknown): value is Record<string, any> {
   return !!value && typeof value === "object";
+}
+
+function normalizeErrorEnvelope(parsed: unknown): Record<string, unknown> | null {
+  if (Array.isArray(parsed)) {
+    const first = parsed[0];
+    return isObject(first) ? first : null;
+  }
+  return isObject(parsed) ? parsed : null;
 }
 
 export const retryInternals = {

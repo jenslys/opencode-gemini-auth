@@ -55,6 +55,36 @@ describe("request helpers", () => {
     expect((parsed.request as Record<string, unknown>).system_instruction).toBeUndefined();
   });
 
+  it("drops thought-only model parts from replayed history", () => {
+    const input =
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:streamGenerateContent";
+    const init: RequestInit = {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        contents: [
+          { role: "user", parts: [{ text: "give me a joke" }] },
+          {
+            role: "model",
+            parts: [{ text: "internal thought", thought: true }],
+          },
+          { role: "user", parts: [{ text: "well?" }] },
+        ],
+      }),
+    };
+
+    const result = prepareGeminiRequest(input, init, "token-123", "project-456");
+    const parsed = JSON.parse(result.init.body as string) as Record<string, unknown>;
+    const request = parsed.request as Record<string, unknown>;
+    const contents = request.contents as Array<Record<string, unknown>>;
+
+    expect(contents.length).toBe(2);
+    expect(contents[0]?.role).toBe("user");
+    expect(contents[1]?.role).toBe("user");
+  });
+
   it("maps traceId to responseId for JSON responses", async () => {
     const response = new Response(
       JSON.stringify({

@@ -116,6 +116,7 @@ function transformRequestBody(
     normalizeThinking(requestPayload);
     normalizeSystemInstruction(requestPayload);
     normalizeCachedContent(requestPayload);
+    stripThoughtPartsFromHistory(requestPayload);
 
     if ("model" in requestPayload) {
       delete requestPayload.model;
@@ -187,4 +188,45 @@ function normalizeCachedContent(requestPayload: Record<string, unknown>): void {
   if (Object.keys(extraBody).length === 0) {
     delete requestPayload.extra_body;
   }
+}
+
+function stripThoughtPartsFromHistory(requestPayload: Record<string, unknown>): void {
+  const contents = requestPayload.contents;
+  if (!Array.isArray(contents)) {
+    return;
+  }
+
+  const sanitizedContents: unknown[] = [];
+  for (const content of contents) {
+    if (!content || typeof content !== "object") {
+      sanitizedContents.push(content);
+      continue;
+    }
+
+    const record = content as Record<string, unknown>;
+    const parts = Array.isArray(record.parts) ? record.parts : undefined;
+    if (!parts) {
+      sanitizedContents.push(content);
+      continue;
+    }
+
+    const filteredParts = parts.filter((part) => {
+      if (!part || typeof part !== "object") {
+        return true;
+      }
+      return (part as Record<string, unknown>).thought !== true;
+    });
+
+    // Drop empty model turns produced by interrupted thought streaming.
+    if (filteredParts.length === 0 && record.role === "model") {
+      continue;
+    }
+
+    sanitizedContents.push({
+      ...record,
+      parts: filteredParts,
+    });
+  }
+
+  requestPayload.contents = sanitizedContents;
 }

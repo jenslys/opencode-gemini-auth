@@ -52,6 +52,16 @@ export interface PluginClient {
   auth: {
     set(input: { path: { id: string }; body: OAuthAuthDetails }): Promise<void>;
   };
+  tui?: {
+    showToast(input: {
+      body: {
+        title?: string;
+        message: string;
+        variant: "info" | "success" | "warning" | "error";
+        duration?: number;
+      };
+    }): Promise<unknown>;
+  };
 }
 
 export interface PluginContext {

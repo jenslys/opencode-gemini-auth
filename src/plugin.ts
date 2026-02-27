@@ -8,6 +8,7 @@ import {
   GEMINI_QUOTA_TOOL_NAME,
 } from "./plugin/quota";
 import { isGeminiDebugEnabled, logGeminiDebugMessage, startGeminiDebugRequest } from "./plugin/debug";
+import { maybeShowGeminiCapacityToast, maybeShowGeminiTestToast } from "./plugin/notify";
 import {
   isGenerativeLanguageRequest,
   prepareGeminiRequest,
@@ -98,6 +99,7 @@ export const GeminiCLIOAuthPlugin = async (
             client,
             configuredProjectId,
           );
+          await maybeShowGeminiTestToast(client, projectContext.effectiveProjectId);
           await maybeLogAvailableQuotaModels(
             authRecord.access,
             projectContext.effectiveProjectId,
@@ -123,6 +125,12 @@ export const GeminiCLIOAuthPlugin = async (
            * We intentionally do not auto-downgrade model tiers to avoid misleading users.
            */
           const response = await fetchWithRetry(transformed.request, transformed.init);
+          await maybeShowGeminiCapacityToast(
+            client,
+            response,
+            projectContext.effectiveProjectId,
+            transformed.requestedModel,
+          );
           return transformGeminiResponse(
             response,
             transformed.streaming,
