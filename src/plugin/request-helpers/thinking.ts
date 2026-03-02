@@ -14,12 +14,18 @@ export function normalizeThinkingConfig(config: unknown): ThinkingConfig | undef
   const includeRaw = record.includeThoughts ?? record.include_thoughts;
 
   const thinkingBudget = typeof budgetRaw === "number" && Number.isFinite(budgetRaw) ? budgetRaw : undefined;
-  const thinkingLevel = typeof levelRaw === "string" && levelRaw.length > 0 ? levelRaw.toLowerCase() : undefined;
+  const thinkingLevel =
+    typeof levelRaw === "string" && levelRaw.trim().length > 0 ? levelRaw.trim().toLowerCase() : undefined;
   const includeThoughts = typeof includeRaw === "boolean" ? includeRaw : undefined;
 
   if (thinkingBudget === undefined && thinkingLevel === undefined && includeThoughts === undefined) {
     return undefined;
   }
+
+  const thinkingEnabled =
+    (thinkingBudget !== undefined && thinkingBudget > 0) ||
+    thinkingLevel !== undefined;
+  const finalIncludeThoughts = thinkingEnabled ? includeThoughts ?? false : false;
 
   const normalized: ThinkingConfig = {};
   if (thinkingBudget !== undefined) {
@@ -28,9 +34,7 @@ export function normalizeThinkingConfig(config: unknown): ThinkingConfig | undef
   if (thinkingLevel !== undefined) {
     normalized.thinkingLevel = thinkingLevel;
   }
-  if (includeThoughts !== undefined) {
-    normalized.includeThoughts = includeThoughts;
-  }
+  normalized.includeThoughts = finalIncludeThoughts;
 
   return normalized;
 }

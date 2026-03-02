@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import { enhanceGeminiErrorResponse } from "./request-helpers";
+import { enhanceGeminiErrorResponse, normalizeThinkingConfig } from "./request-helpers";
 
 describe("enhanceGeminiErrorResponse", () => {
   it("adds retry hint and rate-limit message for 429 rate limits", () => {
@@ -80,5 +80,26 @@ describe("enhanceGeminiErrorResponse", () => {
 
     const result = enhanceGeminiErrorResponse(body, 503);
     expect(result?.retryAfterMs).toBe(2000);
+  });
+});
+
+describe("normalizeThinkingConfig", () => {
+  it("forces includeThoughts to false when thinking is not enabled", () => {
+    expect(normalizeThinkingConfig({ includeThoughts: true })).toEqual({ includeThoughts: false });
+    expect(normalizeThinkingConfig({ thinkingBudget: 0, includeThoughts: true })).toEqual({
+      thinkingBudget: 0,
+      includeThoughts: false,
+    });
+  });
+
+  it("keeps includeThoughts when thinking is enabled by budget or level", () => {
+    expect(normalizeThinkingConfig({ thinkingBudget: 8192, includeThoughts: true })).toEqual({
+      thinkingBudget: 8192,
+      includeThoughts: true,
+    });
+    expect(normalizeThinkingConfig({ thinkingLevel: "HIGH", includeThoughts: true })).toEqual({
+      thinkingLevel: "high",
+      includeThoughts: true,
+    });
   });
 });

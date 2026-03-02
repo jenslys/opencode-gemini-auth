@@ -12,6 +12,11 @@ const MODEL_FALLBACKS: Record<string, string> = {
   "gemini-2.5-flash-image": "gemini-2.5-flash",
 };
 
+export interface ThinkingConfigDefaults {
+  provider?: unknown;
+  models?: Record<string, unknown>;
+}
+
 /**
  * Rewrites OpenAI-style requests into Gemini Code Assist request shape.
  */
@@ -20,6 +25,7 @@ export function prepareGeminiRequest(
   init: RequestInit | undefined,
   accessToken: string,
   projectId: string,
+  thinkingConfigDefaults?: ThinkingConfigDefaults,
 ): {
   request: RequestInfo;
   init: RequestInit;
@@ -61,7 +67,13 @@ export function prepareGeminiRequest(
   let requestIdentifier: string = randomUUID();
 
   if (typeof baseInit.body === "string" && baseInit.body) {
-    const transformed = transformRequestBody(baseInit.body, projectId, effectiveModel);
+    const transformed = transformRequestBody(
+      baseInit.body,
+      projectId,
+      effectiveModel,
+      rawModel,
+      thinkingConfigDefaults,
+    );
     if (transformed.body) {
       body = transformed.body;
       requestIdentifier = transformed.userPromptId;
@@ -97,6 +109,8 @@ function transformRequestBody(
   body: string,
   projectId: string,
   effectiveModel: string,
+  requestedModel: string,
+  thinkingConfigDefaults?: ThinkingConfigDefaults,
 ): { body?: string; userPromptId: string } {
   const fallbackId = randomUUID();
   try {
@@ -115,7 +129,11 @@ function transformRequestBody(
     const requestPayload = { ...parsedBody };
     transformOpenAIToolCalls(requestPayload);
     addThoughtSignaturesToFunctionCalls(requestPayload);
-    normalizeThinking(requestPayload);
+    normalizeThinking(
+      requestPayload,
+      resolveDefaultThinkingConfig(thinkingConfigDefaults, requestedModel, effectiveModel),
+      thinkingConfigDefaults?.provider,
+    );
     normalizeSystemInstruction(requestPayload);
     normalizeCachedContent(requestPayload);
     stripThoughtPartsFromHistory(requestPayload);
@@ -139,9 +157,30 @@ function transformRequestBody(
   }
 }
 
-function normalizeThinking(requestPayload: Record<string, unknown>): void {
+function resolveDefaultThinkingConfig(
+  thinkingConfigDefaults: ThinkingConfigDefaults | undefined,
+  requestedModel: string,
+  effectiveModel: string,
+): unknown {
+  if (!thinkingConfigDefaults?.models) {
+    return undefined;
+  }
+
+  return thinkingConfigDefaults.models[requestedModel] ?? thinkingConfigDefaults.models[effectiveModel];
+}
+
+function normalizeThinking(
+  requestPayload: Record<string, unknown>,
+  modelThinkingConfig: unknown,
+  providerThinkingConfig: unknown,
+): void {
   const rawGenerationConfig = requestPayload.generationConfig as Record<string, unknown> | undefined;
-  const normalizedThinking = normalizeThinkingConfig(rawGenerationConfig?.thinkingConfig);
+  const hasRequestThinkingConfig =
+    !!rawGenerationConfig && Object.prototype.hasOwnProperty.call(rawGenerationConfig, "thinkingConfig");
+  const sourceThinkingConfig = hasRequestThinkingConfig
+    ? rawGenerationConfig?.thinkingConfig
+    : modelThinkingConfig ?? providerThinkingConfig;
+  const normalizedThinking = normalizeThinkingConfig(sourceThinkingConfig);
   if (normalizedThinking) {
     if (rawGenerationConfig) {
       rawGenerationConfig.thinkingConfig = normalizedThinking;
@@ -152,7 +191,7 @@ function normalizeThinking(requestPayload: Record<string, unknown>): void {
     return;
   }
 
-  if (rawGenerationConfig?.thinkingConfig) {
+  if (hasRequestThinkingConfig && rawGenerationConfig) {
     delete rawGenerationConfig.thinkingConfig;
     requestPayload.generationConfig = rawGenerationConfig;
   }

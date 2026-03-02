@@ -12,6 +12,7 @@ import { maybeShowGeminiCapacityToast, maybeShowGeminiTestToast } from "./plugin
 import {
   isGenerativeLanguageRequest,
   prepareGeminiRequest,
+  type ThinkingConfigDefaults,
   transformGeminiResponse,
 } from "./plugin/request";
 import { fetchWithRetry } from "./plugin/retry";
@@ -68,6 +69,7 @@ export const GeminiCLIOAuthPlugin = async (
       const configuredProjectId = resolveConfiguredProjectId(provider);
       latestGeminiConfiguredProjectId = configuredProjectId;
       normalizeProviderModelCosts(provider);
+      const thinkingConfigDefaults = resolveThinkingConfigDefaults(provider);
 
       return {
         apiKey: "",
@@ -109,6 +111,7 @@ export const GeminiCLIOAuthPlugin = async (
             init,
             authRecord.access,
             projectContext.effectiveProjectId,
+            thinkingConfigDefaults,
           );
           const debugContext = startGeminiDebugRequest({
             originalUrl: toUrlString(input),
@@ -185,6 +188,34 @@ function normalizeProviderModelCosts(provider: Provider): void {
       model.cost = { input: 0, output: 0 };
     }
   }
+}
+
+function resolveThinkingConfigDefaults(provider: Provider): ThinkingConfigDefaults | undefined {
+  const providerOptions =
+    provider && typeof provider === "object"
+      ? ((provider as { options?: Record<string, unknown> }).options ?? undefined)
+      : undefined;
+  const providerThinkingConfig = providerOptions?.thinkingConfig;
+
+  const modelThinkingConfigByModel: Record<string, unknown> = {};
+  for (const [modelId, model] of Object.entries(provider.models ?? {})) {
+    if (!model || typeof model !== "object") {
+      continue;
+    }
+    const modelOptions = (model as { options?: Record<string, unknown> }).options;
+    if (modelOptions && typeof modelOptions === "object" && "thinkingConfig" in modelOptions) {
+      modelThinkingConfigByModel[modelId] = modelOptions.thinkingConfig;
+    }
+  }
+
+  if (providerThinkingConfig === undefined && Object.keys(modelThinkingConfigByModel).length === 0) {
+    return undefined;
+  }
+
+  return {
+    provider: providerThinkingConfig,
+    models: modelThinkingConfigByModel,
+  };
 }
 
 async function ensureProjectContextOrThrow(

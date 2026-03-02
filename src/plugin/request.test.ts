@@ -122,4 +122,80 @@ describe("request helpers", () => {
     expect(payload).toContain('"responseId":"trace-456"');
     expect(payload).not.toContain('"traceId"');
   });
+
+  it("injects model-level thinking defaults when request has no thinkingConfig", () => {
+    const input =
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent";
+    const init: RequestInit = {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        contents: [{ role: "user", parts: [{ text: "hi" }] }],
+      }),
+    };
+
+    const result = prepareGeminiRequest(input, init, "token-123", "project-456", {
+      models: {
+        "gemini-3-flash-preview": {
+          thinkingLevel: "HIGH",
+          includeThoughts: true,
+        },
+      },
+      provider: {
+        thinkingLevel: "low",
+        includeThoughts: false,
+      },
+    });
+
+    const parsed = JSON.parse(result.init.body as string) as Record<string, unknown>;
+    const request = parsed.request as Record<string, unknown>;
+    const generationConfig = request.generationConfig as Record<string, unknown>;
+    expect(generationConfig.thinkingConfig).toEqual({
+      thinkingLevel: "high",
+      includeThoughts: true,
+    });
+  });
+
+  it("prefers request thinkingConfig over model/provider defaults", () => {
+    const input =
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent";
+    const init: RequestInit = {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        contents: [{ role: "user", parts: [{ text: "hi" }] }],
+        generationConfig: {
+          thinkingConfig: {
+            thinkingLevel: "low",
+            includeThoughts: false,
+          },
+        },
+      }),
+    };
+
+    const result = prepareGeminiRequest(input, init, "token-123", "project-456", {
+      models: {
+        "gemini-3-flash-preview": {
+          thinkingLevel: "high",
+          includeThoughts: true,
+        },
+      },
+      provider: {
+        thinkingLevel: "high",
+        includeThoughts: true,
+      },
+    });
+
+    const parsed = JSON.parse(result.init.body as string) as Record<string, unknown>;
+    const request = parsed.request as Record<string, unknown>;
+    const generationConfig = request.generationConfig as Record<string, unknown>;
+    expect(generationConfig.thinkingConfig).toEqual({
+      thinkingLevel: "low",
+      includeThoughts: false,
+    });
+  });
 });
