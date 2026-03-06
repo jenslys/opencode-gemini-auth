@@ -9,6 +9,7 @@ import {
 } from "./plugin/quota";
 import { isGeminiDebugEnabled, logGeminiDebugMessage, startGeminiDebugRequest } from "./plugin/debug";
 import { maybeShowGeminiCapacityToast, maybeShowGeminiTestToast } from "./plugin/notify";
+import { resolveConfiguredProjectId, resolveConfiguredProjectIdFromConfig } from "./plugin/provider";
 import {
   isGenerativeLanguageRequest,
   prepareGeminiRequest,
@@ -44,6 +45,7 @@ export const GeminiCLIOAuthPlugin = async (
   { client }: PluginContext,
 ): Promise<PluginResult> => ({
   config: async (config) => {
+    latestGeminiConfiguredProjectId = resolveConfiguredProjectIdFromConfig(config);
     config.command = config.command || {};
     config.command[GEMINI_QUOTA_COMMAND] = {
       description: "Show Gemini Code Assist quota usage",
@@ -66,7 +68,10 @@ export const GeminiCLIOAuthPlugin = async (
         return null;
       }
 
-      const configuredProjectId = resolveConfiguredProjectId(provider);
+      const configuredProjectId = resolveConfiguredProjectId({
+        provider,
+        configProjectId: latestGeminiConfiguredProjectId,
+      });
       latestGeminiConfiguredProjectId = configuredProjectId;
       normalizeProviderModelCosts(provider);
       const thinkingConfigDefaults = resolveThinkingConfigDefaults(provider);
@@ -147,7 +152,9 @@ export const GeminiCLIOAuthPlugin = async (
       {
         label: "OAuth with Google (Gemini CLI)",
         type: "oauth",
-        authorize: createOAuthAuthorizeMethod(),
+        authorize: createOAuthAuthorizeMethod({
+          getConfiguredProjectId: () => latestGeminiConfiguredProjectId,
+        }),
       },
       {
         provider: GEMINI_PROVIDER_ID,
@@ -160,24 +167,6 @@ export const GeminiCLIOAuthPlugin = async (
 
 export const GoogleOAuthPlugin = GeminiCLIOAuthPlugin;
 const loggedQuotaModelsByProject = new Set<string>();
-
-function resolveConfiguredProjectId(provider: Provider): string | undefined {
-  const providerOptions =
-    provider && typeof provider === "object"
-      ? ((provider as { options?: Record<string, unknown> }).options ?? undefined)
-      : undefined;
-  const projectIdFromConfig =
-    providerOptions && typeof providerOptions.projectId === "string"
-      ? providerOptions.projectId.trim()
-      : "";
-  const projectIdFromEnv = process.env.OPENCODE_GEMINI_PROJECT_ID?.trim() ?? "";
-  const googleProjectIdFromEnv =
-    process.env.GOOGLE_CLOUD_PROJECT?.trim() ??
-    process.env.GOOGLE_CLOUD_PROJECT_ID?.trim() ??
-    "";
-
-  return projectIdFromEnv || projectIdFromConfig || googleProjectIdFromEnv || undefined;
-}
 
 function normalizeProviderModelCosts(provider: Provider): void {
   if (!provider.models) {

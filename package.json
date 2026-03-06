@@ -1,7 +1,7 @@
 {
   "name": "opencode-gemini-auth",
   "module": "index.ts",
-  "version": "1.4.6",
+  "version": "1.4.7",
   "author": "jenslys",
   "repository": "https://github.com/jenslys/opencode-gemini-auth",
   "files": [
@@ -22,7 +22,7 @@
     "typescript": "^5.9.3"
   },
   "dependencies": {
-    "@opencode-ai/plugin": "^1.2.10",
+    "@opencode-ai/plugin": "^1.2.20",
     "@openauthjs/openauth": "^0.4.3"
   }
 }

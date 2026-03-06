@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, mock } from "bun:test";
 
+import { formatRefreshParts } from "./auth";
 import { resolveProjectContextFromAccessToken } from "./project";
 import type { OAuthAuthDetails } from "./types";
 
@@ -108,5 +109,29 @@ describe("resolveProjectContextFromAccessToken", () => {
     await expect(
       resolveProjectContextFromAccessToken(baseAuth, baseAuth.access ?? ""),
     ).rejects.toThrow("Google Gemini requires a Google Cloud project");
+  });
+
+  it("prefers a configured project id over a persisted managed project id", async () => {
+    const authWithManagedProject: OAuthAuthDetails = {
+      ...baseAuth,
+      refresh: formatRefreshParts({
+        refreshToken: "refresh-token",
+        managedProjectId: "managed-project",
+      }),
+    };
+
+    const fetchMock = mock(async () => {
+      throw new Error("should not fetch project context when a configured project id exists");
+    });
+    (globalThis as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
+
+    const result = await resolveProjectContextFromAccessToken(
+      authWithManagedProject,
+      authWithManagedProject.access ?? "",
+      "configured-project",
+    );
+
+    expect(result.effectiveProjectId).toBe("configured-project");
+    expect(fetchMock.mock.calls.length).toBe(0);
   });
 });

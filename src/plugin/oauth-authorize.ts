@@ -4,13 +4,16 @@ import { authorizeGemini, exchangeGeminiWithVerifier } from "../gemini/oauth";
 import type { GeminiTokenExchangeResult } from "../gemini/oauth";
 import { isGeminiDebugEnabled, logGeminiDebugMessage } from "./debug";
 import { resolveProjectContextFromAccessToken } from "./project";
+import { resolveConfiguredProjectId } from "./provider";
 import { startOAuthListener, type OAuthListener } from "./server";
 import type { OAuthAuthDetails } from "./types";
 
 /**
  * Builds the OAuth authorize callback used by plugin auth methods.
  */
-export function createOAuthAuthorizeMethod(): () => Promise<{
+export function createOAuthAuthorizeMethod(options?: {
+  getConfiguredProjectId?: () => string | undefined;
+}): () => Promise<{
   url: string;
   instructions: string;
   method: string;
@@ -24,12 +27,9 @@ export function createOAuthAuthorizeMethod(): () => Promise<{
         return result;
       }
 
-      const projectFromEnv = process.env.OPENCODE_GEMINI_PROJECT_ID?.trim() ?? "";
-      const googleProjectFromEnv =
-        process.env.GOOGLE_CLOUD_PROJECT?.trim() ??
-        process.env.GOOGLE_CLOUD_PROJECT_ID?.trim() ??
-        "";
-      const configuredProjectId = projectFromEnv || googleProjectFromEnv || undefined;
+      const configuredProjectId = resolveConfiguredProjectId({
+        configProjectId: options?.getConfiguredProjectId?.(),
+      });
 
       try {
         const authSnapshot = {
