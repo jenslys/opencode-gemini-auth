@@ -9,7 +9,11 @@ import {
 } from "./plugin/quota";
 import { isGeminiDebugEnabled, logGeminiDebugMessage, startGeminiDebugRequest } from "./plugin/debug";
 import { maybeShowGeminiCapacityToast, maybeShowGeminiTestToast } from "./plugin/notify";
-import { resolveConfiguredProjectId, resolveConfiguredProjectIdFromConfig } from "./plugin/provider";
+import {
+  resolveConfiguredProjectId,
+  resolveConfiguredProjectIdFromClient,
+  resolveConfiguredProjectIdFromConfig,
+} from "./plugin/provider";
 import {
   isGenerativeLanguageRequest,
   prepareGeminiRequest,
@@ -43,127 +47,137 @@ let latestGeminiConfiguredProjectId: string | undefined;
  */
 export const GeminiCLIOAuthPlugin = async (
   { client }: PluginContext,
-): Promise<PluginResult> => ({
-  config: async (config) => {
-    latestGeminiConfiguredProjectId = resolveConfiguredProjectIdFromConfig(config);
-    config.command = config.command || {};
-    config.command[GEMINI_QUOTA_COMMAND] = {
-      description: "Show Gemini Code Assist quota usage",
-      template: GEMINI_QUOTA_COMMAND_TEMPLATE,
-    };
-  },
-  tool: {
-    [GEMINI_QUOTA_TOOL_NAME]: createGeminiQuotaTool({
-      client,
-      getAuthResolver: () => latestGeminiAuthResolver,
-      getConfiguredProjectId: () => latestGeminiConfiguredProjectId,
-    }),
-  },
-  auth: {
-    provider: GEMINI_PROVIDER_ID,
-    loader: async (getAuth: GetAuth, provider: Provider): Promise<LoaderResult | null> => {
-      latestGeminiAuthResolver = getAuth;
-      const auth = await getAuth();
-      if (!isOAuthAuth(auth)) {
-        return null;
-      }
+): Promise<PluginResult> => {
+  const resolveLatestConfiguredProjectId = async (provider?: Provider): Promise<string | undefined> => {
+    const configProjectId =
+      (await resolveConfiguredProjectIdFromClient(client)) ?? latestGeminiConfiguredProjectId;
+    const resolvedProjectId = resolveConfiguredProjectId({
+      provider,
+      configProjectId,
+    });
+    latestGeminiConfiguredProjectId = resolvedProjectId;
+    return resolvedProjectId;
+  };
 
-      const configuredProjectId = resolveConfiguredProjectId({
-        provider,
-        configProjectId: latestGeminiConfiguredProjectId,
-      });
-      latestGeminiConfiguredProjectId = configuredProjectId;
-      normalizeProviderModelCosts(provider);
-      const thinkingConfigDefaults = resolveThinkingConfigDefaults(provider);
-
-      return {
-        apiKey: "",
-        async fetch(input, init) {
-          if (!isGenerativeLanguageRequest(input)) {
-            return fetch(input, init);
-          }
-
-          const latestAuth = await getAuth();
-          if (!isOAuthAuth(latestAuth)) {
-            return fetch(input, init);
-          }
-
-          let authRecord = resolveCachedAuth(latestAuth);
-          if (accessTokenExpired(authRecord)) {
-            const refreshed = await refreshAccessToken(authRecord, client);
-            if (!refreshed) {
-              return fetch(input, init);
-            }
-            authRecord = refreshed;
-          }
-
-          if (!authRecord.access) {
-            return fetch(input, init);
-          }
-
-          const projectContext = await ensureProjectContextOrThrow(
-            authRecord,
-            client,
-            configuredProjectId,
-          );
-          await maybeShowGeminiTestToast(client, projectContext.effectiveProjectId);
-          await maybeLogAvailableQuotaModels(
-            authRecord.access,
-            projectContext.effectiveProjectId,
-          );
-          const transformed = prepareGeminiRequest(
-            input,
-            init,
-            authRecord.access,
-            projectContext.effectiveProjectId,
-            thinkingConfigDefaults,
-          );
-          const debugContext = startGeminiDebugRequest({
-            originalUrl: toUrlString(input),
-            resolvedUrl: toUrlString(transformed.request),
-            method: transformed.init.method,
-            headers: transformed.init.headers,
-            body: transformed.init.body,
-            streaming: transformed.streaming,
-            projectId: projectContext.effectiveProjectId,
-          });
-
-          /**
-           * Retry transport/429 failures while preserving the requested model.
-           * We intentionally do not auto-downgrade model tiers to avoid misleading users.
-           */
-          const response = await fetchWithRetry(transformed.request, transformed.init);
-          await maybeShowGeminiCapacityToast(
-            client,
-            response,
-            projectContext.effectiveProjectId,
-            transformed.requestedModel,
-          );
-          return transformGeminiResponse(
-            response,
-            transformed.streaming,
-            debugContext,
-            transformed.requestedModel,
-          );
-        },
+  return {
+    config: async (config) => {
+      latestGeminiConfiguredProjectId = resolveConfiguredProjectIdFromConfig(config);
+      config.command = config.command || {};
+      config.command[GEMINI_QUOTA_COMMAND] = {
+        description: "Show Gemini Code Assist quota usage",
+        template: GEMINI_QUOTA_COMMAND_TEMPLATE,
       };
     },
-    methods: [
-      {
-        label: "OAuth with Google (Gemini CLI)",
-        type: "oauth",
-        authorize: createOAuthAuthorizeMethod({
-          getConfiguredProjectId: () => latestGeminiConfiguredProjectId,
-        }),
+    tool: {
+      [GEMINI_QUOTA_TOOL_NAME]: createGeminiQuotaTool({
+        client,
+        getAuthResolver: () => latestGeminiAuthResolver,
+        getConfiguredProjectId: () => latestGeminiConfiguredProjectId,
+      }),
+    },
+    auth: {
+      provider: GEMINI_PROVIDER_ID,
+      loader: async (getAuth: GetAuth, provider: Provider): Promise<LoaderResult | null> => {
+        latestGeminiAuthResolver = getAuth;
+        const auth = await getAuth();
+        if (!isOAuthAuth(auth)) {
+          return null;
+        }
+
+        await resolveLatestConfiguredProjectId(provider);
+        normalizeProviderModelCosts(provider);
+        const thinkingConfigDefaults = resolveThinkingConfigDefaults(provider);
+
+        return {
+          apiKey: "",
+          async fetch(input, init) {
+            if (!isGenerativeLanguageRequest(input)) {
+              return fetch(input, init);
+            }
+
+            const latestAuth = await getAuth();
+            if (!isOAuthAuth(latestAuth)) {
+              return fetch(input, init);
+            }
+
+            let authRecord = resolveCachedAuth(latestAuth);
+            if (accessTokenExpired(authRecord)) {
+              const refreshed = await refreshAccessToken(authRecord, client);
+              if (!refreshed) {
+                return fetch(input, init);
+              }
+              authRecord = refreshed;
+            }
+
+            if (!authRecord.access) {
+              return fetch(input, init);
+            }
+
+            const configuredProjectId = await resolveLatestConfiguredProjectId(provider);
+            const projectContext = await ensureProjectContextOrThrow(
+              authRecord,
+              client,
+              configuredProjectId,
+            );
+            await maybeShowGeminiTestToast(client, projectContext.effectiveProjectId);
+            await maybeLogAvailableQuotaModels(
+              authRecord.access,
+              projectContext.effectiveProjectId,
+            );
+            const transformed = prepareGeminiRequest(
+              input,
+              init,
+              authRecord.access,
+              projectContext.effectiveProjectId,
+              thinkingConfigDefaults,
+            );
+            const debugContext = startGeminiDebugRequest({
+              originalUrl: toUrlString(input),
+              resolvedUrl: toUrlString(transformed.request),
+              method: transformed.init.method,
+              headers: transformed.init.headers,
+              body: transformed.init.body,
+              streaming: transformed.streaming,
+              projectId: projectContext.effectiveProjectId,
+            });
+
+            /**
+             * Retry transport/429 failures while preserving the requested model.
+             * We intentionally do not auto-downgrade model tiers to avoid misleading users.
+             */
+            const response = await fetchWithRetry(transformed.request, transformed.init);
+            await maybeShowGeminiCapacityToast(
+              client,
+              response,
+              projectContext.effectiveProjectId,
+              transformed.requestedModel,
+            );
+            return transformGeminiResponse(
+              response,
+              transformed.streaming,
+              debugContext,
+              transformed.requestedModel,
+            );
+          },
+        };
       },
-      {
-        provider: GEMINI_PROVIDER_ID,
-        label: "Manually enter API Key",
-        type: "api",
-      },
-    ],
-  },
-});
+      methods: [
+        {
+          label: "OAuth with Google (Gemini CLI)",
+          type: "oauth",
+          authorize: createOAuthAuthorizeMethod({
+            getConfiguredProjectId: () => resolveLatestConfiguredProjectId(),
+          }),
+        },
+        {
+          provider: GEMINI_PROVIDER_ID,
+          label: "Manually enter API Key",
+          type: "api",
+        },
+      ],
+    },
+  };
+};
 
 export const GoogleOAuthPlugin = GeminiCLIOAuthPlugin;
 const loggedQuotaModelsByProject = new Set<string>();

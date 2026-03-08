@@ -20,7 +20,10 @@ export interface CloudAiCompanionProject {
 }
 
 export interface GeminiIneligibleTier {
+  reasonCode?: string;
   reasonMessage?: string;
+  validationUrl?: string;
+  validationLearnMoreUrl?: string;
 }
 
 export interface LoadCodeAssistPayload {
@@ -63,5 +66,29 @@ export class ProjectIdRequiredError extends Error {
     super(
       "Google Gemini requires a Google Cloud project. Enable the Gemini for Google Cloud API on a project you control, then set `provider.google.options.projectId` in your Opencode config (or set OPENCODE_GEMINI_PROJECT_ID / GOOGLE_CLOUD_PROJECT).",
     );
+  }
+}
+
+export class AccountValidationRequiredError extends Error {
+  validationUrl?: string;
+  validationLearnMoreUrl?: string;
+
+  constructor(
+    message: string,
+    validationUrl?: string,
+    validationLearnMoreUrl?: string,
+  ) {
+    const parts = [message.trim()];
+    if (validationUrl) {
+      parts.push(`Complete validation: ${validationUrl}`);
+    }
+    if (validationLearnMoreUrl) {
+      parts.push(`Learn more: ${validationLearnMoreUrl}`);
+    }
+
+    super(parts.join("\n"));
+    this.name = "AccountValidationRequiredError";
+    this.validationUrl = validationUrl;
+    this.validationLearnMoreUrl = validationLearnMoreUrl;
   }
 }

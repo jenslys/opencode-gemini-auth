@@ -1,7 +1,7 @@
 import type { Config } from "@opencode-ai/sdk";
 
 import { GEMINI_PROVIDER_ID } from "../constants";
-import type { Provider } from "./types";
+import type { PluginClient, Provider } from "./types";
 
 interface ResolveConfiguredProjectIdInput {
   provider?: Provider | null;
@@ -43,6 +43,21 @@ export function resolveConfiguredProjectIdFromConfig(
 
   const providerConfig = config.provider[GEMINI_PROVIDER_ID];
   return normalizeProjectId(providerConfig?.options?.projectId);
+}
+
+export async function resolveConfiguredProjectIdFromClient(
+  client: PluginClient | null | undefined,
+): Promise<string | undefined> {
+  if (!client?.config?.get) {
+    return undefined;
+  }
+
+  try {
+    const result = await client.config.get();
+    return resolveConfiguredProjectIdFromConfig(result?.data);
+  } catch {
+    return undefined;
+  }
 }
 
 function normalizeProjectId(value: unknown): string | undefined {

@@ -12,7 +12,7 @@ import type { OAuthAuthDetails } from "./types";
  * Builds the OAuth authorize callback used by plugin auth methods.
  */
 export function createOAuthAuthorizeMethod(options?: {
-  getConfiguredProjectId?: () => string | undefined;
+  getConfiguredProjectId?: () => Promise<string | undefined> | string | undefined;
 }): () => Promise<{
   url: string;
   instructions: string;
@@ -28,7 +28,7 @@ export function createOAuthAuthorizeMethod(options?: {
       }
 
       const configuredProjectId = resolveConfiguredProjectId({
-        configProjectId: options?.getConfiguredProjectId?.(),
+        configProjectId: await options?.getConfiguredProjectId?.(),
       });
 
       try {
@@ -97,19 +97,38 @@ export function createOAuthAuthorizeMethod(options?: {
         method: "auto",
         callback: async (): Promise<GeminiTokenExchangeResult> => {
           try {
-            const callbackUrl = await listener.waitForCallback();
-            const code = callbackUrl.searchParams.get("code");
-            const state = callbackUrl.searchParams.get("state");
+            while (true) {
+              const callbackUrl = await listener.waitForCallback();
+              const callbackError = callbackUrl.searchParams.get("error");
+              const callbackErrorDescription = callbackUrl.searchParams.get("error_description");
+              if (callbackError) {
+                return {
+                  type: "failed",
+                  error: callbackErrorDescription || callbackError,
+                };
+              }
 
-            if (!code || !state) {
-              return { type: "failed", error: "Missing code or state in callback URL" };
+              const code = callbackUrl.searchParams.get("code");
+              const state = callbackUrl.searchParams.get("state");
+              if (!code || !state) {
+                continue;
+              }
+              if (state !== authorization.state) {
+                if (isGeminiDebugEnabled()) {
+                  logGeminiDebugMessage("Ignoring OAuth callback with mismatched state");
+                }
+                continue;
+              }
+
+              const exchangeResult = await exchangeGeminiWithVerifier(code, authorization.verifier);
+              if (shouldIgnoreMalformedAuthCode(exchangeResult)) {
+                if (isGeminiDebugEnabled()) {
+                  logGeminiDebugMessage("Ignoring malformed OAuth callback code and waiting for the next redirect");
+                }
+                continue;
+              }
+              return await maybeHydrateProjectId(exchangeResult);
             }
-            if (state !== authorization.state) {
-              return { type: "failed", error: "State mismatch in callback URL (possible CSRF attempt)" };
-            }
-            return await maybeHydrateProjectId(
-              await exchangeGeminiWithVerifier(code, authorization.verifier),
-            );
           } catch (error) {
             return {
               type: "failed",
@@ -195,4 +214,12 @@ function openBrowserUrl(url: string): void {
     });
     child.unref?.();
   } catch {}
+}
+
+function shouldIgnoreMalformedAuthCode(result: GeminiTokenExchangeResult): boolean {
+  if (result.type !== "failed") {
+    return false;
+  }
+
+  return /invalid_grant/i.test(result.error) && /malformed auth code/i.test(result.error);
 }

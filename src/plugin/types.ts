@@ -52,6 +52,11 @@ export interface PluginClient {
   auth: {
     set(input: { path: { id: string }; body: OAuthAuthDetails }): Promise<void>;
   };
+  config?: {
+    get(options?: unknown): Promise<{
+      data?: Config;
+    } | undefined>;
+  };
   tui?: {
     showToast(input: {
       body: {

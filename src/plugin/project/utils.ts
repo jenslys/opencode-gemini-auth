@@ -1,5 +1,6 @@
 import type { OAuthAuthDetails } from "../types";
 import {
+  AccountValidationRequiredError,
   CODE_ASSIST_METADATA,
   LEGACY_TIER_ID,
   type CloudAiCompanionProject,
@@ -66,6 +67,26 @@ export function buildIneligibleTierMessage(tiers?: GeminiIneligibleTier[]): stri
     .map((tier) => tier?.reasonMessage?.trim())
     .filter((message): message is string => !!message);
   return reasons.length > 0 ? reasons.join(", ") : undefined;
+}
+
+export function throwIfValidationRequired(tiers?: GeminiIneligibleTier[]): void {
+  if (!tiers || tiers.length === 0) {
+    return;
+  }
+
+  const validationTier = tiers.find((tier) => {
+    const reasonCode = tier?.reasonCode?.trim().toUpperCase();
+    return reasonCode === "VALIDATION_REQUIRED" && !!tier.validationUrl?.trim();
+  });
+  if (!validationTier) {
+    return;
+  }
+
+  throw new AccountValidationRequiredError(
+    validationTier.reasonMessage?.trim() || "Verify your account to continue.",
+    validationTier.validationUrl?.trim(),
+    validationTier.validationLearnMoreUrl?.trim(),
+  );
 }
 
 /**

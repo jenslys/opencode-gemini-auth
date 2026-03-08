@@ -37,23 +37,12 @@ export async function startOAuthListener(
     : 80;
   const origin = `${redirectUri.protocol}//${redirectUri.host}`;
 
-  let settled = false;
-  let resolveCallback: (url: URL) => void;
-  let rejectCallback: (error: Error) => void;
-  const callbackPromise = new Promise<URL>((resolve, reject) => {
-    resolveCallback = (url: URL) => {
-      if (settled) return;
-      settled = true;
-      if (timeoutHandle) clearTimeout(timeoutHandle);
-      resolve(url);
-    };
-    rejectCallback = (error: Error) => {
-      if (settled) return;
-      settled = true;
-      if (timeoutHandle) clearTimeout(timeoutHandle);
-      reject(error);
-    };
-  });
+  const callbackQueue: URL[] = [];
+  const callbackWaiters: Array<{
+    resolve: (url: URL) => void;
+    reject: (error: Error) => void;
+  }> = [];
+  let terminalError: Error | undefined;
 
 const successResponse = `<!DOCTYPE html>
 <html lang="en">
@@ -182,8 +171,27 @@ const successResponse = `<!DOCTYPE html>
   </body>
 </html>`;
 
+  const deliverCallback = (url: URL) => {
+    const waiter = callbackWaiters.shift();
+    if (waiter) {
+      waiter.resolve(url);
+      return;
+    }
+    callbackQueue.push(url);
+  };
+
+  const failPendingWaiters = (error: Error) => {
+    if (terminalError) {
+      return;
+    }
+    terminalError = error;
+    while (callbackWaiters.length > 0) {
+      callbackWaiters.shift()?.reject(error);
+    }
+  };
+
   const timeoutHandle = setTimeout(() => {
-    rejectCallback(new Error("Timed out waiting for OAuth callback"));
+    failPendingWaiters(new Error("Timed out waiting for OAuth callback"));
   }, timeoutMs);
   timeoutHandle.unref?.();
 
@@ -201,14 +209,18 @@ const successResponse = `<!DOCTYPE html>
       return;
     }
 
+    const hasCode = !!url.searchParams.get("code");
+    const hasState = !!url.searchParams.get("state");
+    const hasError = !!url.searchParams.get("error");
+    if (!hasError && (!hasCode || !hasState)) {
+      response.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
+      response.end("Ignoring incomplete OAuth callback. Return to the Google sign-in flow.");
+      return;
+    }
+
     response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
     response.end(successResponse);
-
-    resolveCallback(url);
-
-    setImmediate(() => {
-      server.close();
-    });
+    deliverCallback(url);
   });
 
   await new Promise<void>((resolve, reject) => {
@@ -224,11 +236,21 @@ const successResponse = `<!DOCTYPE html>
   });
 
   server.on("error", (error) => {
-    rejectCallback(error instanceof Error ? error : new Error(String(error)));
+    failPendingWaiters(error instanceof Error ? error : new Error(String(error)));
   });
 
   return {
-    waitForCallback: () => callbackPromise,
+    waitForCallback: async () => {
+      if (callbackQueue.length > 0) {
+        return callbackQueue.shift() as URL;
+      }
+      if (terminalError) {
+        throw terminalError;
+      }
+      return await new Promise<URL>((resolve, reject) => {
+        callbackWaiters.push({ resolve, reject });
+      });
+    },
     close: () =>
       new Promise<void>((resolve, reject) => {
         server.close((error) => {
@@ -236,9 +258,10 @@ const successResponse = `<!DOCTYPE html>
             reject(error);
             return;
           }
-          if (!settled) {
-            rejectCallback(new Error("OAuth listener closed before callback"));
+          if (timeoutHandle) {
+            clearTimeout(timeoutHandle);
           }
+          failPendingWaiters(new Error("OAuth listener closed before callback"));
           resolve();
         });
       }),

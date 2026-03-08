@@ -3,7 +3,13 @@ import { formatRefreshParts, parseRefreshParts } from "../auth";
 import type { OAuthAuthDetails, PluginClient, ProjectContextResult } from "../types";
 import { loadManagedProject, onboardManagedProject } from "./api";
 import { FREE_TIER_ID, LEGACY_TIER_ID, ProjectIdRequiredError } from "./types";
-import { buildIneligibleTierMessage, getCacheKey, normalizeProjectId, pickOnboardTier } from "./utils";
+import {
+  buildIneligibleTierMessage,
+  getCacheKey,
+  normalizeProjectId,
+  pickOnboardTier,
+  throwIfValidationRequired,
+} from "./utils";
 
 const projectContextResultCache = new Map<string, ProjectContextResult>();
 const projectContextPendingCache = new Map<string, Promise<ProjectContextResult>>();
@@ -44,9 +50,10 @@ export async function resolveProjectContextFromAccessToken(
   persistAuth?: (auth: OAuthAuthDetails) => Promise<void>,
 ): Promise<ProjectContextResult> {
   const parts = parseRefreshParts(auth.refresh);
-  const projectId = configuredProjectId?.trim() || parts.projectId;
+  const configuredProject = configuredProjectId?.trim();
+  const projectId = configuredProject || parts.projectId;
 
-  if (projectId || parts.managedProjectId) {
+  if (!configuredProject && (projectId || parts.managedProjectId)) {
     return {
       auth,
       effectiveProjectId: projectId || parts.managedProjectId || "",
@@ -68,6 +75,10 @@ export async function resolveProjectContextFromAccessToken(
   }
 
   const currentTierId = loadPayload.currentTier?.id;
+  if (!currentTierId) {
+    throwIfValidationRequired(loadPayload.ineligibleTiers);
+  }
+
   if (currentTierId) {
     if (projectId) {
       return { auth, effectiveProjectId: projectId };

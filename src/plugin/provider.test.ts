@@ -1,8 +1,12 @@
 import { describe, expect, it } from "bun:test";
 import type { Config } from "@opencode-ai/sdk";
 
-import { resolveConfiguredProjectId, resolveConfiguredProjectIdFromConfig } from "./provider";
-import type { Provider } from "./types";
+import {
+  resolveConfiguredProjectId,
+  resolveConfiguredProjectIdFromClient,
+  resolveConfiguredProjectIdFromConfig,
+} from "./provider";
+import type { PluginClient, Provider } from "./types";
 
 describe("resolveConfiguredProjectId", () => {
   it("reads project id from provider options", () => {
@@ -55,5 +59,25 @@ describe("resolveConfiguredProjectId", () => {
         },
       }),
     ).toBe("opencode-project");
+  });
+
+  it("reads the current project id from the Opencode config API when available", async () => {
+    const client = {
+      config: {
+        get: async () => ({
+          data: {
+            provider: {
+              google: {
+                options: {
+                  projectId: "live-config-project",
+                },
+              },
+            },
+          } satisfies Config,
+        }),
+      },
+    } satisfies PluginClient;
+
+    await expect(resolveConfiguredProjectIdFromClient(client)).resolves.toBe("live-config-project");
   });
 });
