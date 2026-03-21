@@ -12,12 +12,14 @@ interface GeminiQuotaToolDependencies {
   client: PluginClient;
   getAuthResolver: () => GetAuth | undefined;
   getConfiguredProjectId: () => string | undefined;
+  getUserAgentModel: () => string | undefined;
 }
 
 export function createGeminiQuotaTool({
   client,
   getAuthResolver,
   getConfiguredProjectId,
+  getUserAgentModel,
 }: GeminiQuotaToolDependencies) {
   return tool({
     description:
@@ -52,6 +54,7 @@ export function createGeminiQuotaTool({
           authRecord,
           client,
           getConfiguredProjectId(),
+          getUserAgentModel(),
         );
         if (!projectContext.effectiveProjectId) {
           return "Gemini quota lookup failed because no Google Cloud project could be resolved.";
@@ -60,6 +63,7 @@ export function createGeminiQuotaTool({
         const quota = await retrieveUserQuota(
           authRecord.access,
           projectContext.effectiveProjectId,
+          getUserAgentModel(),
         );
         if (!quota?.buckets?.length) {
           return `No Gemini quota buckets were returned for project \`${projectContext.effectiveProjectId}\`.`;

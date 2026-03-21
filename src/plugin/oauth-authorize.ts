@@ -13,6 +13,7 @@ import type { OAuthAuthDetails } from "./types";
  */
 export function createOAuthAuthorizeMethod(options?: {
   getConfiguredProjectId?: () => Promise<string | undefined> | string | undefined;
+  getUserAgentModel?: () => Promise<string | undefined> | string | undefined;
 }): () => Promise<{
   url: string;
   instructions: string;
@@ -42,6 +43,8 @@ export function createOAuthAuthorizeMethod(options?: {
           authSnapshot,
           result.access,
           configuredProjectId,
+          undefined,
+          await options?.getUserAgentModel?.(),
         );
 
         if (projectContext.auth.refresh !== result.refresh && isGeminiDebugEnabled()) {

@@ -1,4 +1,5 @@
-import { CODE_ASSIST_HEADERS, GEMINI_CODE_ASSIST_ENDPOINT } from "../../constants";
+import { GEMINI_CODE_ASSIST_ENDPOINT } from "../../constants";
+import { createGeminiActivityRequestId } from "../activity-request-id";
 import { logGeminiDebugResponse, startGeminiDebugRequest } from "../debug";
 import { buildGeminiCliUserAgent } from "../user-agent";
 import {
@@ -16,6 +17,7 @@ import { buildMetadata, isVpcScError, parseJsonSafe, wait } from "./utils";
 export async function loadManagedProject(
   accessToken: string,
   projectId?: string,
+  userAgentModel?: string,
 ): Promise<LoadCodeAssistPayload | null> {
   try {
     const metadata = buildMetadata(projectId);
@@ -25,12 +27,7 @@ export async function loadManagedProject(
     }
 
     const url = `${GEMINI_CODE_ASSIST_ENDPOINT}/v1internal:loadCodeAssist`;
-    const headers = {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${accessToken}`,
-      "User-Agent": buildGeminiCliUserAgent(),
-      ...CODE_ASSIST_HEADERS,
-    };
+    const headers = buildCodeAssistHeaders(accessToken, userAgentModel);
     const debugContext = startGeminiDebugRequest({
       originalUrl: url,
       resolvedUrl: url,
@@ -75,6 +72,7 @@ export async function onboardManagedProject(
   accessToken: string,
   tierId: string,
   projectId?: string,
+  userAgentModel?: string,
   attempts = 10,
   delayMs = 5000,
 ): Promise<string | undefined> {
@@ -91,15 +89,15 @@ export async function onboardManagedProject(
 
   const baseUrl = `${GEMINI_CODE_ASSIST_ENDPOINT}/v1internal`;
   const onboardUrl = `${baseUrl}:onboardUser`;
-  const headers = {
-    "Content-Type": "application/json",
-    Authorization: `Bearer ${accessToken}`,
-    "User-Agent": buildGeminiCliUserAgent(),
-    ...CODE_ASSIST_HEADERS,
-  };
 
   try {
-    const response = await fetchWithDebug(onboardUrl, "POST", headers, requestBody, projectId);
+    const response = await fetchWithDebug(
+      onboardUrl,
+      "POST",
+      buildCodeAssistHeaders(accessToken, userAgentModel),
+      requestBody,
+      projectId,
+    );
     if (!response.ok) {
       return undefined;
     }
@@ -109,7 +107,13 @@ export async function onboardManagedProject(
       for (let attempt = 0; attempt < attempts; attempt += 1) {
         await wait(delayMs);
         const operationUrl = `${baseUrl}/${payload.name}`;
-        const opResponse = await fetchWithDebug(operationUrl, "GET", headers, undefined, projectId);
+        const opResponse = await fetchWithDebug(
+          operationUrl,
+          "GET",
+          buildCodeAssistHeaders(accessToken, userAgentModel),
+          undefined,
+          projectId,
+        );
         if (!opResponse.ok) {
           return undefined;
         }
@@ -141,14 +145,10 @@ export async function onboardManagedProject(
 export async function retrieveUserQuota(
   accessToken: string,
   projectId: string,
+  userAgentModel?: string,
 ): Promise<RetrieveUserQuotaResponse | null> {
   const url = `${GEMINI_CODE_ASSIST_ENDPOINT}/v1internal:retrieveUserQuota`;
-  const headers = {
-    "Content-Type": "application/json",
-    Authorization: `Bearer ${accessToken}`,
-    "User-Agent": buildGeminiCliUserAgent(),
-    ...CODE_ASSIST_HEADERS,
-  };
+  const headers = buildCodeAssistHeaders(accessToken, userAgentModel);
 
   try {
     const response = await fetch(url, {
@@ -164,6 +164,15 @@ export async function retrieveUserQuota(
   } catch {
     return null;
   }
+}
+
+function buildCodeAssistHeaders(accessToken: string, userAgentModel?: string): Record<string, string> {
+  return {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${accessToken}`,
+    "User-Agent": buildGeminiCliUserAgent(userAgentModel),
+    "x-activity-request-id": createGeminiActivityRequestId(),
+  };
 }
 
 async function fetchWithDebug(

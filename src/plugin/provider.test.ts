@@ -11,10 +11,6 @@ import type { PluginClient, Provider } from "./types";
 describe("resolveConfiguredProjectId", () => {
   it("reads project id from provider options", () => {
     const provider = {
-      id: "google",
-      name: "Google",
-      source: "config",
-      env: [],
       options: {
         projectId: "  provider-project  ",
       },
@@ -63,6 +59,9 @@ describe("resolveConfiguredProjectId", () => {
 
   it("reads the current project id from the Opencode config API when available", async () => {
     const client = {
+      auth: {
+        set: async () => {},
+      },
       config: {
         get: async () => ({
           data: {

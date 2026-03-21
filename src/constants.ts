@@ -27,11 +27,6 @@ export const GEMINI_REDIRECT_URI = "http://localhost:8085/oauth2callback";
  */
 export const GEMINI_CODE_ASSIST_ENDPOINT = "https://cloudcode-pa.googleapis.com";
 
-export const CODE_ASSIST_HEADERS = {
-  "X-Goog-Api-Client": "gl-node/22.17.0",
-  "Client-Metadata": "ideType=IDE_UNSPECIFIED,platform=PLATFORM_UNSPECIFIED,pluginType=GEMINI",
-} as const;
-
 /**
  * Provider identifier shared between the plugin loader and credential store.
  */

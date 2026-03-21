@@ -16,6 +16,7 @@ import {
 } from "./plugin/provider";
 import {
   isGenerativeLanguageRequest,
+  parseGenerativeLanguageRequest,
   prepareGeminiRequest,
   type ThinkingConfigDefaults,
   transformGeminiResponse,
@@ -40,6 +41,7 @@ Do not call other tools.
 `;
 let latestGeminiAuthResolver: GetAuth | undefined;
 let latestGeminiConfiguredProjectId: string | undefined;
+let latestGeminiUserAgentModel: string | undefined;
 
 /**
  * Registers the Gemini OAuth provider for Opencode, handling auth, request rewriting,
@@ -73,6 +75,7 @@ export const GeminiCLIOAuthPlugin = async (
         client,
         getAuthResolver: () => latestGeminiAuthResolver,
         getConfiguredProjectId: () => latestGeminiConfiguredProjectId,
+        getUserAgentModel: () => latestGeminiUserAgentModel,
       }),
     },
     auth: {
@@ -114,15 +117,22 @@ export const GeminiCLIOAuthPlugin = async (
             }
 
             const configuredProjectId = await resolveLatestConfiguredProjectId(provider);
+            const requestTarget = parseGenerativeLanguageRequest(input);
+            const requestUserAgentModel = requestTarget?.effectiveModel;
+            if (requestUserAgentModel) {
+              latestGeminiUserAgentModel = requestUserAgentModel;
+            }
             const projectContext = await ensureProjectContextOrThrow(
               authRecord,
               client,
               configuredProjectId,
+              requestUserAgentModel,
             );
             await maybeShowGeminiTestToast(client, projectContext.effectiveProjectId);
             await maybeLogAvailableQuotaModels(
               authRecord.access,
               projectContext.effectiveProjectId,
+              requestUserAgentModel,
             );
             const transformed = prepareGeminiRequest(
               input,
@@ -167,6 +177,7 @@ export const GeminiCLIOAuthPlugin = async (
           type: "oauth",
           authorize: createOAuthAuthorizeMethod({
             getConfiguredProjectId: () => resolveLatestConfiguredProjectId(),
+            getUserAgentModel: () => latestGeminiUserAgentModel,
           }),
         },
         {
@@ -225,9 +236,10 @@ async function ensureProjectContextOrThrow(
   authRecord: OAuthAuthDetails,
   client: PluginClient,
   configuredProjectId?: string,
+  userAgentModel?: string,
 ) {
   try {
-    return await ensureProjectContext(authRecord, client, configuredProjectId);
+    return await ensureProjectContext(authRecord, client, configuredProjectId, userAgentModel);
   } catch (error) {
     if (error instanceof Error) {
       console.error(error.message);
@@ -256,6 +268,7 @@ function toUrlString(value: RequestInfo): string {
 async function maybeLogAvailableQuotaModels(
   accessToken: string,
   projectId: string,
+  userAgentModel?: string,
 ): Promise<void> {
   if (!isGeminiDebugEnabled() || !projectId) {
     return;
@@ -266,7 +279,7 @@ async function maybeLogAvailableQuotaModels(
   }
   loggedQuotaModelsByProject.add(projectId);
 
-  const quota = await retrieveUserQuota(accessToken, projectId);
+  const quota = await retrieveUserQuota(accessToken, projectId, userAgentModel);
   if (!quota?.buckets) {
     logGeminiDebugMessage(`Code Assist quota model lookup returned no buckets for project: ${projectId}`);
     return;

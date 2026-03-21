@@ -54,6 +54,7 @@ describe("request helpers", () => {
     expect(parsed.project).toBe("project-456");
     expect(parsed.model).toBe("gemini-3-flash-preview");
     expect(parsed.user_prompt_id).toBeTruthy();
+    expect(headers.get("x-activity-request-id")).not.toBe(parsed.user_prompt_id);
     expect((parsed.request as Record<string, unknown>).session_id).toBeTruthy();
     expect((parsed.request as Record<string, unknown>).systemInstruction).toBeDefined();
     expect((parsed.request as Record<string, unknown>).system_instruction).toBeUndefined();

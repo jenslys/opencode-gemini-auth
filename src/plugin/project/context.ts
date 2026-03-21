@@ -48,6 +48,7 @@ export async function resolveProjectContextFromAccessToken(
   accessToken: string,
   configuredProjectId?: string,
   persistAuth?: (auth: OAuthAuthDetails) => Promise<void>,
+  userAgentModel?: string,
 ): Promise<ProjectContextResult> {
   const parts = parseRefreshParts(auth.refresh);
   const configuredProject = configuredProjectId?.trim();
@@ -60,7 +61,7 @@ export async function resolveProjectContextFromAccessToken(
     };
   }
 
-  const loadPayload = await loadManagedProject(accessToken, projectId);
+  const loadPayload = await loadManagedProject(accessToken, projectId, userAgentModel);
   if (!loadPayload) {
     throw new ProjectIdRequiredError();
   }
@@ -96,7 +97,12 @@ export async function resolveProjectContextFromAccessToken(
     throw new ProjectIdRequiredError();
   }
 
-  const onboardedProjectId = await onboardManagedProject(accessToken, tierId, projectId);
+  const onboardedProjectId = await onboardManagedProject(
+    accessToken,
+    tierId,
+    projectId,
+    userAgentModel,
+  );
   if (onboardedProjectId) {
     const updatedAuth = withProjectAuth(auth, parts.refreshToken, projectId, onboardedProjectId);
     if (persistAuth) {
@@ -118,6 +124,7 @@ export async function ensureProjectContext(
   auth: OAuthAuthDetails,
   client: PluginClient,
   configuredProjectId?: string,
+  userAgentModel?: string,
 ): Promise<ProjectContextResult> {
   const accessToken = auth.access;
   if (!accessToken) {
@@ -147,6 +154,7 @@ export async function ensureProjectContext(
           body: updatedAuth,
         });
       },
+      userAgentModel,
     );
 
   if (!cacheKey) {

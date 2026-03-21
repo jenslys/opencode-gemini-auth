@@ -27,9 +27,11 @@ describe("resolveProjectContextFromAccessToken", () => {
   });
 
   it("stores managed project id from loadCodeAssist without onboarding", async () => {
-    const fetchMock = mock(async (input: RequestInfo) => {
+    let loadHeaders: Headers | undefined;
+    const fetchMock = mock(async (input: RequestInfo, init?: RequestInit) => {
       const url = toUrlString(input);
       if (url.includes(":loadCodeAssist")) {
+        loadHeaders = new Headers(init?.headers);
         return new Response(
           JSON.stringify({
             currentTier: { id: "free-tier" },
@@ -45,15 +47,24 @@ describe("resolveProjectContextFromAccessToken", () => {
     const result = await resolveProjectContextFromAccessToken(
       baseAuth,
       baseAuth.access ?? "",
+      undefined,
+      undefined,
+      "gemini-3-flash-preview",
     );
 
     expect(result.effectiveProjectId).toBe("projects/server-project");
     expect(result.auth.refresh).toContain("projects/server-project");
     expect(fetchMock.mock.calls.length).toBe(1);
+    expect(loadHeaders?.get("User-Agent")).toContain("GeminiCLI/");
+    expect(loadHeaders?.get("User-Agent")).toContain("/gemini-3-flash-preview ");
+    expect(loadHeaders?.get("x-activity-request-id")).toBeTruthy();
+    expect(loadHeaders?.get("Client-Metadata")).toBeNull();
+    expect(loadHeaders?.get("X-Goog-Api-Client")).toBeNull();
   });
 
   it("onboards free-tier users without sending a project id", async () => {
     let onboardBody: Record<string, unknown> | undefined;
+    let onboardHeaders: Headers | undefined;
     const fetchMock = mock(async (input: RequestInfo, init?: RequestInit) => {
       const url = toUrlString(input);
       if (url.includes(":loadCodeAssist")) {
@@ -67,6 +78,7 @@ describe("resolveProjectContextFromAccessToken", () => {
       if (url.includes(":onboardUser")) {
         const rawBody = typeof init?.body === "string" ? init.body : "{}";
         onboardBody = JSON.parse(rawBody) as Record<string, unknown>;
+        onboardHeaders = new Headers(init?.headers);
         return new Response(
           JSON.stringify({
             done: true,
@@ -82,6 +94,9 @@ describe("resolveProjectContextFromAccessToken", () => {
     const result = await resolveProjectContextFromAccessToken(
       baseAuth,
       baseAuth.access ?? "",
+      undefined,
+      undefined,
+      "gemini-3-flash-preview",
     );
 
     expect(result.effectiveProjectId).toBe("managed-project");
@@ -89,6 +104,8 @@ describe("resolveProjectContextFromAccessToken", () => {
     expect(onboardBody?.cloudaicompanionProject).toBeUndefined();
     const metadata = onboardBody?.metadata as Record<string, unknown> | undefined;
     expect(metadata?.duetProject).toBeUndefined();
+    expect(onboardHeaders?.get("User-Agent")).toContain("/gemini-3-flash-preview ");
+    expect(onboardHeaders?.get("x-activity-request-id")).toBeTruthy();
   });
 
   it("throws when a non-free tier requires a project id", async () => {

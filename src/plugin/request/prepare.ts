@@ -1,16 +1,14 @@
 import { randomUUID } from "node:crypto";
 
-import { CODE_ASSIST_HEADERS, GEMINI_CODE_ASSIST_ENDPOINT } from "../../constants";
+import { GEMINI_CODE_ASSIST_ENDPOINT } from "../../constants";
+import { createGeminiActivityRequestId } from "../activity-request-id";
 import { normalizeThinkingConfig } from "../request-helpers";
 import { buildGeminiCliUserAgent } from "../user-agent";
 import { normalizeRequestPayloadIdentifiers, normalizeWrappedIdentifiers } from "./identifiers";
 import { addThoughtSignaturesToFunctionCalls, transformOpenAIToolCalls } from "./openai";
-import { isGenerativeLanguageRequest, toRequestUrlString } from "./shared";
+import { isGenerativeLanguageRequest, parseGenerativeLanguageRequest } from "./shared";
 
 const STREAM_ACTION = "streamGenerateContent";
-const MODEL_FALLBACKS: Record<string, string> = {
-  "gemini-2.5-flash-image": "gemini-2.5-flash",
-};
 
 export interface ThinkingConfigDefaults {
   provider?: unknown;
@@ -47,8 +45,8 @@ export function prepareGeminiRequest(
   headers.delete("x-api-key");
   headers.delete("x-goog-api-key");
 
-  const match = toRequestUrlString(input).match(/\/models\/([^:]+):(\w+)/);
-  if (!match) {
+  const requestTarget = parseGenerativeLanguageRequest(input);
+  if (!requestTarget) {
     return {
       request: input,
       init: { ...baseInit, headers },
@@ -56,15 +54,14 @@ export function prepareGeminiRequest(
     };
   }
 
-  const [, rawModel = "", rawAction = ""] = match;
-  const effectiveModel = MODEL_FALLBACKS[rawModel] ?? rawModel;
+  const { requestedModel: rawModel, effectiveModel, action: rawAction } = requestTarget;
   const streaming = rawAction === STREAM_ACTION;
   const transformedUrl = `${GEMINI_CODE_ASSIST_ENDPOINT}/v1internal:${rawAction}${
     streaming ? "?alt=sse" : ""
   }`;
 
   let body = baseInit.body;
-  let requestIdentifier: string = randomUUID();
+  let activityRequestId = createGeminiActivityRequestId();
 
   if (typeof baseInit.body === "string" && baseInit.body) {
     const transformed = transformRequestBody(
@@ -76,7 +73,6 @@ export function prepareGeminiRequest(
     );
     if (transformed.body) {
       body = transformed.body;
-      requestIdentifier = transformed.userPromptId;
     }
   }
 
@@ -85,13 +81,11 @@ export function prepareGeminiRequest(
   }
 
   headers.set("User-Agent", buildGeminiCliUserAgent(effectiveModel));
-  headers.set("X-Goog-Api-Client", CODE_ASSIST_HEADERS["X-Goog-Api-Client"]);
-  headers.set("Client-Metadata", CODE_ASSIST_HEADERS["Client-Metadata"]);
   /**
-   * Request-scoped identifier used by Gemini CLI tooling and backend traces.
-   * We keep this aligned so quota/debug triage can correlate client and server events.
+   * Gemini CLI injects a short request-scoped id through its activity logger.
+   * We set the same wire-visible header directly so backend/debug traces match.
    */
-  headers.set("x-activity-request-id", requestIdentifier);
+  headers.set("x-activity-request-id", activityRequestId);
 
   return {
     request: transformedUrl,
