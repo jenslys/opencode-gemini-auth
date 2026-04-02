@@ -35,10 +35,12 @@ Add the plugin to your Opencode configuration file
 ```
 
 > [!IMPORTANT]
-> If you're using a paid Gemini Code Assist subscription (Standard/Enterprise),
-> explicitly configure a Google Cloud `projectId`. Free tier accounts should
-> auto-provision a managed project, but you can still set `projectId` to force
-> a specific project.
+> Explicitly configure a Google Cloud `projectId` if you're using an
+> organization-backed Gemini Code Assist subscription
+> (`Standard`/`Enterprise`) or a company, school, or Google Workspace account.
+> Most individual Google accounts should not need this. `Google AI Plus` is not
+> a Gemini Code Assist subscription tier. You can still set `projectId` to
+> force a specific project.
 
 ## Usage
 
@@ -205,7 +207,7 @@ Common causes of `429 RESOURCE_EXHAUSTED` or `QUOTA_EXHAUSTED`:
 Notes:
 
 - **Gemini CLI auto-fallbacks**: the official CLI may fall back to Flash when Pro quotas are exhausted, so it can appear to “work” even if the Pro bucket is depleted.
-- **Paid plans still require a project**: to use paid quotas in Opencode, set `provider.google.options.projectId` (or `OPENCODE_GEMINI_PROJECT_ID`) and re-authenticate.
+- **Org-backed Code Assist subscriptions require a project**: if you're using Gemini Code Assist `Standard` or `Enterprise`, set `provider.google.options.projectId` (or `OPENCODE_GEMINI_PROJECT_ID`) and re-authenticate.
 
 ### Debugging
 
