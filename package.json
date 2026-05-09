@@ -1,25 +1,37 @@
 {
   "name": "opencode-gemini-auth",
-  "main": "./index.ts",
-  "module": "index.ts",
-  "version": "1.4.12",
+  "version": "1.4.13",
   "author": "jenslys",
   "repository": "https://github.com/jenslys/opencode-gemini-auth",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
   "files": [
-    "index.ts",
-    "src"
+    "dist",
+    "README.md",
+    "LICENSE"
   ],
   "license": "MIT",
   "type": "module",
   "scripts": {
+    "build": "tsup",
+    "smoke:node-import": "node -e \"import(require.resolve('opencode-gemini-auth')).then(() => console.log('ok')).catch((error) => { console.error(error); process.exit(1); })\"",
+    "prepack": "bun run build && bun run smoke:node-import",
+    "prepublishOnly": "bun test && bun run prepack",
     "update:gemini-cli": "git -C .local/gemini-cli pull --ff-only",
     "update:gemini-cli-version": "node commands/sync-gemini-cli-version.mjs",
     "update:gemini-cli-sync": "npm run update:gemini-cli && npm run update:gemini-cli-version"
   },
   "devDependencies": {
-    "@types/bun": "latest"
-  },
-  "peerDependencies": {
+    "@types/bun": "latest",
+    "tsup": "^8.5.1",
     "typescript": "^5.9.3"
   },
   "dependencies": {

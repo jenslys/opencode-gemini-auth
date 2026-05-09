@@ -26,6 +26,11 @@ jobs:
           registry-url: https://registry.npmjs.org
           always-auth: true
 
+      - name: Use Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
       - name: Determine release state
         id: determine
         run: |
@@ -63,7 +68,11 @@ jobs:
 
       - name: Install dependencies
         if: steps.determine.outputs.changed == 'true' && steps.determine.outputs.tag_exists == 'false'
-        run: npm install
+        run: bun install --frozen-lockfile
+
+      - name: Verify package
+        if: steps.determine.outputs.changed == 'true' && steps.determine.outputs.tag_exists == 'false'
+        run: bun run prepublishOnly
 
       - name: Generate release notes
         if: steps.determine.outputs.changed == 'true' && steps.determine.outputs.tag_exists == 'false'
