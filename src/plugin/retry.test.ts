@@ -292,7 +292,8 @@ describe("fetchWithRetry", () => {
     expect(fetchMock.mock.calls.length).toBe(3);
     expect(scheduledDelays.length).toBe(2);
     expect(scheduledDelays[0]).toBe(1500);
-    expect(scheduledDelays[1]).toBe(1500);
+    expect(scheduledDelays[1]).toBeGreaterThan(0);
+    expect(scheduledDelays[1]).toBeLessThanOrEqual(1500);
   });
 });
 

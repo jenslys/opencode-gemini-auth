@@ -142,4 +142,4 @@ jobs:
         if: steps.determine.outputs.changed == 'true' && steps.determine.outputs.tag_exists == 'false'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish --access public --provenance
+        run: npm publish --access public --provenance --ignore-scripts
