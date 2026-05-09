@@ -22,6 +22,10 @@ export interface ProviderModel {
   cost?: {
     input: number;
     output: number;
+    cache?: {
+      read: number;
+      write: number;
+    };
   };
   [key: string]: unknown;
 }

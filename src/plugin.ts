@@ -195,13 +195,42 @@ export const GoogleOAuthPlugin = GeminiCLIOAuthPlugin;
 const loggedQuotaModelsByProject = new Set<string>();
 
 function normalizeProviderModelCosts(provider: Provider): void {
-  if (!provider.models) {
+  if (!provider?.models || typeof provider.models !== "object") {
     return;
   }
-  for (const model of Object.values(provider.models)) {
-    if (model) {
-      model.cost = { input: 0, output: 0 };
+  for (const [modelId, model] of Object.entries(provider.models)) {
+    if (!model || typeof model !== "object") {
+      continue;
     }
+    // Preserve existing cost fields while ensuring required fields exist
+    const existingCost = model.cost;
+    const isValidCost =
+      existingCost &&
+      typeof existingCost === "object" &&
+      typeof existingCost.input === "number" &&
+      typeof existingCost.output === "number";
+    // Build full OpenCode cost shape including cache fields
+    const normalizedCost = {
+      input: isValidCost ? existingCost.input : 0,
+      output: isValidCost ? existingCost.output : 0,
+      cache: {
+        read:
+          isValidCost &&
+          typeof existingCost.cache === "object" &&
+          existingCost.cache !== null &&
+          typeof (existingCost.cache as { read?: number }).read === "number"
+            ? (existingCost.cache as { read: number }).read
+            : 0,
+        write:
+          isValidCost &&
+          typeof existingCost.cache === "object" &&
+          existingCost.cache !== null &&
+          typeof (existingCost.cache as { write?: number }).write === "number"
+            ? (existingCost.cache as { write: number }).write
+            : 0,
+      },
+    };
+    model.cost = normalizedCost;
   }
 }
 
