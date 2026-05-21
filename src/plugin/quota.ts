@@ -102,8 +102,8 @@ export function formatGeminiQuotaOutput(
     `Gemini quota usage for project \`${projectId}\``,
     "",
     showTokenType
-      ? `  ↳ ${pad("Variant", variantWidth)}  Remaining                   Reset      Type`
-      : `  ↳ ${pad("Variant", variantWidth)}  Remaining                   Reset`,
+      ? `  ↳ ${pad("Variant", variantWidth)}  Used        Remaining                   Reset      Type`
+      : `  ↳ ${pad("Variant", variantWidth)}  Used        Remaining                   Reset`,
   ];
 
   for (let index = 0; index < versionGroups.length; index += 1) {
@@ -120,8 +120,8 @@ export function formatGeminiQuotaOutput(
       for (const row of model.rows) {
         lines.push(
           showTokenType
-            ? `  ↳ ${pad(row.variant, variantWidth)}  ${pad(row.usageRemaining, 27)} ${pad(row.resetValue, 8)} ${row.tokenType}`
-            : `  ↳ ${pad(row.variant, variantWidth)}  ${pad(row.usageRemaining, 27)} ${row.resetValue}`,
+            ? `  ↳ ${pad(row.variant, variantWidth)}  ${pad(row.usageUsed, 11)} ${pad(row.usageRemaining, 27)} ${pad(row.resetValue, 8)} ${row.tokenType}`
+            : `  ↳ ${pad(row.variant, variantWidth)}  ${pad(row.usageUsed, 11)} ${pad(row.usageRemaining, 27)} ${row.resetValue}`,
         );
       }
     }
@@ -149,26 +149,42 @@ function compareQuotaBuckets(
   return (left.resetTime ?? "").localeCompare(right.resetTime ?? "");
 }
 
-function formatUsageRemaining(bucket: RetrieveUserQuotaBucket): string {
+interface UsageInfo {
+  used: string;
+  remaining: string;
+}
+
+function formatUsageInfo(bucket: RetrieveUserQuotaBucket): UsageInfo {
   const remainingAmount = formatRemainingAmount(bucket.remainingAmount);
   const remainingFraction = bucket.remainingFraction;
   const hasFraction =
     typeof remainingFraction === "number" && Number.isFinite(remainingFraction);
 
+  if (hasFraction && remainingAmount) {
+    const parsed = Number.parseInt(bucket.remainingAmount!, 10);
+    if (Number.isFinite(parsed) && remainingFraction > 0 && remainingFraction <= 1) {
+      const total = Math.round(parsed / remainingFraction);
+      const used = total - parsed;
+      return {
+        used: used.toLocaleString("en-US"),
+        remaining: `${buildProgressBar(remainingFraction)} ${(remainingFraction * 100).toFixed(1)}% (${remainingAmount} left)`,
+      };
+    }
+  }
+
   if (hasFraction) {
     const clamped = clamp(remainingFraction, 0, 1);
-    const percent = (clamped * 100).toFixed(1);
-    const bar = buildProgressBar(clamped);
-    return remainingAmount
-      ? `${bar} ${percent}% (${remainingAmount} left)`
-      : `${bar} ${percent}%`;
+    return {
+      used: "unknown",
+      remaining: `${buildProgressBar(clamped)} ${(clamped * 100).toFixed(1)}%`,
+    };
   }
 
   if (remainingAmount) {
-    return remainingAmount;
+    return { used: "unknown", remaining: remainingAmount };
   }
 
-  return "unknown";
+  return { used: "unknown", remaining: "unknown" };
 }
 
 function formatRemainingAmount(value: string | undefined): string | undefined {
@@ -243,6 +259,7 @@ function normalizeTokenType(bucket: RetrieveUserQuotaBucket): string {
 
 interface GroupedQuotaRow {
   variant: string;
+  usageUsed: string;
   usageRemaining: string;
   resetValue: string;
   tokenType: string;
@@ -260,7 +277,7 @@ function groupQuotaRows(sortedBuckets: RetrieveUserQuotaBucket[]): GroupedQuotaM
   for (const bucket of sortedBuckets) {
     const modelId = bucket.modelId?.trim() || "unknown-model";
     const { baseModel, variant } = splitModelVariant(modelId);
-    const usageRemaining = formatUsageRemaining(bucket);
+    const usageInfo = formatUsageInfo(bucket);
     const resetLabel = formatRelativeResetTime(bucket.resetTime);
     const resetValue = resetLabel?.replace("resets in ", "") ?? "-";
     const tokenType = normalizeTokenType(bucket);
@@ -269,7 +286,8 @@ function groupQuotaRows(sortedBuckets: RetrieveUserQuotaBucket[]): GroupedQuotaM
     if (existing) {
       existing.rows.push({
         variant,
-        usageRemaining,
+        usageUsed: usageInfo.used,
+        usageRemaining: usageInfo.remaining,
         resetValue,
         tokenType,
       });
@@ -281,7 +299,8 @@ function groupQuotaRows(sortedBuckets: RetrieveUserQuotaBucket[]): GroupedQuotaM
       version: extractModelVersion(baseModel),
       rows: [{
         variant,
-        usageRemaining,
+        usageUsed: usageInfo.used,
+        usageRemaining: usageInfo.remaining,
         resetValue,
         tokenType,
       }],
