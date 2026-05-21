@@ -1,5 +1,8 @@
+import { randomUUID } from "node:crypto";
+
 interface GeminiFunctionCallPart {
   functionCall?: {
+    id?: string;
     name: string;
     args?: Record<string, unknown>;
     [key: string]: unknown;
@@ -21,6 +24,10 @@ interface OpenAIMessage {
   content?: string | null;
   tool_calls?: OpenAIToolCall[];
   [key: string]: unknown;
+}
+
+function makeFunctionCallId(name: string): string {
+  return `${name}__${randomUUID()}`;
 }
 
 /**
@@ -60,10 +67,12 @@ export function transformOpenAIToolCalls(requestPayload: Record<string, unknown>
 
       const name = fn.name;
       const args = parseJsonObject(fn.arguments);
+      const resolvedName = name ?? "";
       parts.push({
         functionCall: {
-          name: name ?? "",
+          name: resolvedName,
           args,
+          id: makeFunctionCallId(resolvedName),
         },
         thoughtSignature: "skip_thought_signature_validator",
       });
@@ -99,8 +108,14 @@ export function addThoughtSignaturesToFunctionCalls(requestPayload: Record<strin
           continue;
         }
         const partObj = part as Record<string, unknown>;
-        if (partObj.functionCall && !partObj.thoughtSignature) {
-          partObj.thoughtSignature = "skip_thought_signature_validator";
+        if (partObj.functionCall) {
+          if (!partObj.thoughtSignature) {
+            partObj.thoughtSignature = "skip_thought_signature_validator";
+          }
+          const fc = partObj.functionCall as Record<string, unknown>;
+          if (!fc.id) {
+            fc.id = makeFunctionCallId((fc.name as string) || "");
+          }
         }
       }
     }
