@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { formatGeminiQuotaOutput, formatRelativeResetTime } from "./quota";
+import { formatAggregateSummary, formatGeminiQuotaOutput, formatRelativeResetTime } from "./quota";
+import type { AccountState } from "./types";
 import type { RetrieveUserQuotaBucket } from "./project/types";
 
 const REAL_DATE_NOW = Date.now;
@@ -127,5 +128,75 @@ describe("formatGeminiQuotaOutput", () => {
     expect(output).toContain("REQUESTS");
     expect(output).toContain("TOKENS");
     expect(output).toContain("  ↳ vertex");
+  });
+});
+
+describe("formatAggregateSummary", () => {
+  it("returns summary for single account", () => {
+    const accounts: AccountState[] = [{
+      account: { id: "user1", refreshToken: "rt1", enabled: true },
+      auth: { type: "oauth", refresh: "rt1" },
+      cooldowns: new Map(),
+      lastUsed: Date.now(),
+      usageCount: 0,
+      health: { value: 1.0, successRate: 1.0, quotaRemaining: 0.5, latencyScore: 1.0, cooldownScore: 1.0 },
+    }];
+
+    const result = formatAggregateSummary(accounts);
+    expect(result).toContain("Aggregate:");
+    expect(result).toContain("50.0%");
+    expect(result).toContain("1 account(s)");
+  });
+
+  it("computes average across multiple accounts", () => {
+    const now = Date.now();
+    const accounts: AccountState[] = [
+      {
+        account: { id: "user1", refreshToken: "rt1", enabled: true },
+        auth: { type: "oauth", refresh: "rt1" },
+        cooldowns: new Map(),
+        lastUsed: now,
+        usageCount: 0,
+        health: { value: 0.8, successRate: 0.8, quotaRemaining: 0.9, latencyScore: 1.0, cooldownScore: 1.0 },
+      },
+      {
+        account: { id: "user2", refreshToken: "rt2", enabled: true, email: "user2@test.com" },
+        auth: { type: "oauth", refresh: "rt2" },
+        cooldowns: new Map(),
+        lastUsed: now,
+        usageCount: 0,
+        health: { value: 0.4, successRate: 0.4, quotaRemaining: 0.1, latencyScore: 0.5, cooldownScore: 0.5 },
+      },
+    ];
+
+    const result = formatAggregateSummary(accounts);
+    // (0.9 + 0.1) / 2 = 0.5 = 50.0%
+    expect(result).toContain("50.0%");
+    expect(result).toContain("2 account(s)");
+  });
+
+  it("returns 0% when all accounts have zero remaining quota", () => {
+    const now = Date.now();
+    const accounts: AccountState[] = [
+      {
+        account: { id: "user1", refreshToken: "rt1", enabled: true },
+        auth: { type: "oauth", refresh: "rt1" },
+        cooldowns: new Map(),
+        lastUsed: now,
+        usageCount: 0,
+        health: { value: 0.3, successRate: 0.5, quotaRemaining: 0.0, latencyScore: 1.0, cooldownScore: 1.0 },
+      },
+      {
+        account: { id: "user2", refreshToken: "rt2", enabled: true },
+        auth: { type: "oauth", refresh: "rt2" },
+        cooldowns: new Map(),
+        lastUsed: now,
+        usageCount: 0,
+        health: { value: 0.3, successRate: 0.5, quotaRemaining: 0.0, latencyScore: 1.0, cooldownScore: 1.0 },
+      },
+    ];
+
+    const result = formatAggregateSummary(accounts);
+    expect(result).toContain("0.0%");
   });
 });

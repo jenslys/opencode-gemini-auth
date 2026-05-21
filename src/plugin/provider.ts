@@ -1,7 +1,11 @@
 import type { Config } from "@opencode-ai/sdk";
 
 import { GEMINI_PROVIDER_ID } from "../constants";
-import type { PluginClient, Provider } from "./types";
+import type {
+  GeminiAccount,
+  PluginClient,
+  Provider,
+} from "./types";
 
 interface ResolveConfiguredProjectIdInput {
   provider?: Provider | null;
@@ -67,4 +71,39 @@ function normalizeProjectId(value: unknown): string | undefined {
 
   const trimmed = value.trim();
   return trimmed || undefined;
+}
+
+/**
+ * Resolves project ID for a specific account, using the account's optional override.
+ */
+export function resolveProjectIdForAccount(
+  account: GeminiAccount,
+  fallbackProjectId?: string,
+): string | undefined {
+  return account.projectId ?? fallbackProjectId;
+}
+
+/**
+ * Reads accounts[] from the provider's options.
+ * Returns undefined when no accounts are configured (pool-of-one fallback).
+ */
+export function resolveAccountsFromProvider(provider?: Provider | null): GeminiAccount[] | undefined {
+  if (!provider || typeof provider !== "object") {
+    return undefined;
+  }
+  const options = provider.options;
+  if (!options || typeof options !== "object") {
+    return undefined;
+  }
+  const raw = (options as Record<string, unknown>).accounts;
+  if (!Array.isArray(raw) || raw.length === 0) {
+    return undefined;
+  }
+  const accounts = raw.filter(
+    (a): a is GeminiAccount =>
+      a !== null &&
+      typeof a === "object" &&
+      typeof (a as GeminiAccount).id === "string",
+  );
+  return accounts.length > 0 ? accounts : undefined;
 }

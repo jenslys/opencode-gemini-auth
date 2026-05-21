@@ -1,0 +1,33 @@
+# openspec/config.yaml
+schema: spec-driven
+
+context: |
+  Tech stack: TypeScript (ESNext, strict mode), Bun runtime, ESM modules
+  Architecture: OpenCode plugin for Gemini OAuth auth — PKCE flow, token refresh, request proxying to Gemini Code Assist API, quota management
+  Testing: Bun built-in test runner (bun:test), 11 test files, no coverage tool configured
+  Style: TypeScript with strict mode, verbatim module syntax, no external linter/formatter configured
+  Build: tsup bundles to ESM, target node20, inlines external dependencies
+  CI: GitHub Actions — release pipeline via bun install + tsup build + npm publish
+
+rules:
+  proposal:
+    - Include rollback plan for risky changes
+  specs:
+    - Use Given/When/Then for scenarios
+    - Use RFC 2119 keywords (MUST, SHALL, SHOULD, MAY)
+  design:
+    - Include sequence diagrams for complex flows
+    - Document architecture decisions with rationale
+  tasks:
+    - Group by phase, use hierarchical numbering
+    - Keep tasks completable in one session
+  apply:
+    - Follow existing code patterns
+    tdd: true
+    test_command: "bun test"
+  verify:
+    test_command: "bun test"
+    build_command: "bun run build"
+    coverage_threshold: 0
+  archive:
+    - Warn before merging destructive deltas

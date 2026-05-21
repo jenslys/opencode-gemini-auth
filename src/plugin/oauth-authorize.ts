@@ -6,7 +6,8 @@ import { isGeminiDebugEnabled, logGeminiDebugMessage } from "./debug";
 import { resolveProjectContextFromAccessToken } from "./project";
 import { resolveConfiguredProjectId } from "./provider";
 import { startOAuthListener, type OAuthListener } from "./server";
-import type { OAuthAuthDetails } from "./types";
+import type { OAuthAuthDetails, AuthMethod } from "./types";
+import type { AccountManager } from "./account-manager";
 
 /**
  * Builds the OAuth authorize callback used by plugin auth methods.
@@ -217,6 +218,80 @@ function openBrowserUrl(url: string): void {
     });
     child.unref?.();
   } catch {}
+}
+
+/**
+ * Creates an OAuth authorize method scoped to adding a new account.
+ * Similar to createOAuthAuthorizeMethod but returns the account info
+ * for pool integration instead of replacing the global auth.
+ */
+export function createOAuthAuthorizeMethodForAccount(options?: {
+  onAccountAdded?: (account: { email?: string; refreshToken: string; access?: string; expires?: number }) => void;
+}): () => Promise<{
+  url: string;
+  instructions: string;
+  method: string;
+  callback: (() => Promise<GeminiTokenExchangeResult>) | ((callbackUrl: string) => Promise<GeminiTokenExchangeResult>);
+}> {
+  return async () => {
+    const baseMethod = createOAuthAuthorizeMethod();
+    const result = await baseMethod();
+    
+    return {
+      ...result,
+      callback: async (callbackUrl?: string) => {
+        const exchangeResult = typeof result.callback === "function" && result.callback.length > 0
+          ? await (result.callback as any)(callbackUrl)
+          : await (result.callback as any)();
+
+        if (exchangeResult.type === "success" && options?.onAccountAdded) {
+          options.onAccountAdded({
+            email: exchangeResult.email,
+            refreshToken: exchangeResult.refresh,
+            access: exchangeResult.access,
+            expires: exchangeResult.expires
+          });
+        }
+        return exchangeResult;
+      }
+    };
+  };
+}
+
+/**
+ * Creates an "Add Gemini Account" auth method that integrates with AccountManager.
+ */
+export function createAddAccountAuthMethod(getAccountManager: () => AccountManager): AuthMethod {
+  return {
+    label: "Add Gemini Account",
+    type: "oauth",
+    authorize: async () => {
+      const baseMethod = createOAuthAuthorizeMethod();
+      const baseResult = await baseMethod();
+
+      return {
+        ...baseResult,
+        callback: async (callbackUrl?: string) => {
+          const exchangeResult = typeof baseResult.callback === "function" && baseResult.callback.length > 0
+            ? await (baseResult.callback as any)(callbackUrl)
+            : await (baseResult.callback as any)();
+
+          if (exchangeResult.type === "success") {
+            const accountManager = getAccountManager();
+            const addCallback = accountManager.createAddAccountCallback();
+            await addCallback({
+              type: "success",
+              refresh: exchangeResult.refresh,
+              access: exchangeResult.access,
+              expires: exchangeResult.expires,
+              email: exchangeResult.email,
+            });
+          }
+          return exchangeResult as GeminiTokenExchangeResult;
+        },
+      };
+    },
+  };
 }
 
 function shouldIgnoreMalformedAuthCode(result: GeminiTokenExchangeResult): boolean {

@@ -5,6 +5,7 @@ import { loadManagedProject, onboardManagedProject } from "./api";
 import { FREE_TIER_ID, LEGACY_TIER_ID, ProjectIdRequiredError } from "./types";
 import {
   buildIneligibleTierMessage,
+  buildProjectCacheKeyForAccount,
   getCacheKey,
   normalizeProjectId,
   pickOnboardTier,
@@ -203,4 +204,31 @@ function buildProjectCacheKey(auth: OAuthAuthDetails, configuredProjectId?: stri
   }
   const project = configuredProjectId?.trim() ?? "";
   return project ? `${base}|cfg:${project}` : base;
+}
+
+/**
+ * Ensures project context for a specific account, caching by account ID.
+ */
+export async function ensureProjectContextForAccount(
+  auth: OAuthAuthDetails,
+  client: PluginClient,
+  accountId: string,
+  configuredProjectId?: string,
+  userAgentModel?: string,
+): Promise<ProjectContextResult> {
+  const cacheKey = buildProjectCacheKeyForAccount(accountId, configuredProjectId);
+  const cached = projectContextResultCache.get(cacheKey);
+  if (cached) return cached;
+
+  const context = await ensureProjectContext(auth, client, configuredProjectId, userAgentModel);
+  projectContextResultCache.set(cacheKey, context);
+  return context;
+}
+
+/**
+ * Invalidates project context cache for a specific account.
+ */
+export function invalidateProjectContextCacheForAccount(accountId: string, projectId?: string): void {
+  const cacheKey = buildProjectCacheKeyForAccount(accountId, projectId);
+  projectContextResultCache.delete(cacheKey);
 }

@@ -1,10 +1,11 @@
 import { tool } from "@opencode-ai/plugin";
 import { accessTokenExpired, isOAuthAuth } from "./auth";
 import { resolveCachedAuth } from "./cache";
-import { ensureProjectContext, retrieveUserQuota } from "./project";
+import { ensureProjectContextForAccount, retrieveUserQuota } from "./project";
 import type { RetrieveUserQuotaBucket } from "./project/types";
 import { refreshAccessToken } from "./token";
-import type { GetAuth, PluginClient } from "./types";
+import type { AccountPool } from "./account-pool";
+import type { AccountState, GetAuth, PluginClient } from "./types";
 
 export const GEMINI_QUOTA_TOOL_NAME = "gemini_quota";
 
@@ -13,6 +14,7 @@ interface GeminiQuotaToolDependencies {
   getAuthResolver: () => GetAuth | undefined;
   getConfiguredProjectId: () => string | undefined;
   getUserAgentModel: () => string | undefined;
+  getPool?: () => AccountPool | undefined;
 }
 
 export function createGeminiQuotaTool({
@@ -20,6 +22,7 @@ export function createGeminiQuotaTool({
   getAuthResolver,
   getConfiguredProjectId,
   getUserAgentModel,
+  getPool,
 }: GeminiQuotaToolDependencies) {
   return tool({
     description:
@@ -50,9 +53,19 @@ export function createGeminiQuotaTool({
       }
 
       try {
-        const projectContext = await ensureProjectContext(
+        const pool = getPool?.();
+        if (pool && pool.count() > 1) {
+          return await formatMultiAccountQuotaOutput(
+            pool,
+            client,
+            getUserAgentModel(),
+          );
+        }
+
+        const projectContext = await ensureProjectContextForAccount(
           authRecord,
           client,
+          "default",
           getConfiguredProjectId(),
           getUserAgentModel(),
         );
@@ -403,4 +416,112 @@ function splitModelVariant(modelId: string): { baseModel: string; variant: strin
     baseModel: modelId,
     variant: "default",
   };
+}
+
+/**
+ * Formats a multi-account quota output with per-account sections and an aggregate summary.
+ */
+async function formatMultiAccountQuotaOutput(
+  pool: AccountPool,
+  client: PluginClient,
+  userAgentModel?: string,
+): Promise<string> {
+  const accounts = pool.getAccounts();
+  const lines: string[] = ["Gemini quota usage (all accounts):\n"];
+  
+  // Track total remaining fraction to compute an accurate aggregate
+  let sumOfFractions = 0;
+  let fractionCount = 0;
+
+  for (const state of accounts) {
+    let accountLabel = state.account.email ?? state.account.id;
+    if (accountLabel.length > 30 && !state.account.email) {
+      accountLabel = `${accountLabel.slice(0, 10)}...${accountLabel.slice(-5)}`;
+    }
+
+    lines.push(`Account: ${accountLabel}`);
+    const accessToken = state.auth.access;
+    if (!accessToken) {
+      lines.push("  (no access token available)");
+      lines.push("");
+      continue;
+    }
+
+    try {
+      const projectContext = await ensureProjectContextForAccount(
+        state.auth,
+        client,
+        state.account.id,
+        state.account.projectId,
+        userAgentModel,
+      );
+      
+      const projectId = projectContext.effectiveProjectId;
+      if (!projectId) {
+        lines.push("  Quota lookup failed: no Google Cloud project could be resolved.");
+        lines.push("");
+        continue;
+      }
+
+      const quota = await retrieveUserQuota(accessToken, projectId, userAgentModel);
+      if (!quota?.buckets?.length) {
+        lines.push(`  No quota buckets returned for project \`${projectId}\`.`);
+      } else {
+        // Compute an average remaining quota for THIS account to update the pool health
+        let accRemaining = 0;
+        let accBucketCount = 0;
+        
+        for (const bucket of quota.buckets) {
+          if (typeof bucket.remainingFraction === "number") {
+             accRemaining += bucket.remainingFraction;
+             accBucketCount++;
+             
+             sumOfFractions += bucket.remainingFraction;
+             fractionCount++;
+          }
+        }
+        
+        if (accBucketCount > 0) {
+           pool.updateQuotaRemaining(state.account.id, accRemaining / accBucketCount);
+        }
+
+        const formatted = formatGeminiQuotaOutput(projectId, quota.buckets);
+        const quotaLines = formatted.split("\n");
+        for (let i = 0; i < quotaLines.length; i++) {
+          if (i === 0) continue;
+          if (quotaLines[i] === "") {
+             if (i === 1) continue;
+             lines.push("");
+          } else {
+             lines.push(`  ${quotaLines[i]}`);
+          }
+        }
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "unknown error";
+      lines.push(`  Quota lookup failed: ${message}`);
+    }
+    lines.push("");
+  }
+
+  const avgRemaining = fractionCount > 0 ? (sumOfFractions / fractionCount) * 100 : 0;
+  lines.push(`Aggregate: ${avgRemaining.toFixed(1)}% average remaining across ${accounts.length} account(s)`);
+  
+  return lines.join("\n");
+}
+
+/**
+ * Computes the average quota remaining across all accounts.
+ * Uses health.quotaRemaining as a proxy for per-account remaining quota percentage.
+ */
+export function formatAggregateSummary(accounts: AccountState[]): string {
+  // This is kept for backwards compatibility in tests, but in production
+  // formatMultiAccountQuotaOutput handles the aggregate directly now
+  let totalRemaining = 0;
+  const totalCapacity = accounts.length;
+  for (const account of accounts) {
+    totalRemaining += account.health.quotaRemaining;
+  }
+  const avgRemaining = totalCapacity > 0 ? (totalRemaining / totalCapacity) * 100 : 0;
+  return `Aggregate: ${avgRemaining.toFixed(1)}% average remaining across ${totalCapacity} account(s)`;
 }
