@@ -174,8 +174,9 @@ function formatUsageInfo(bucket: RetrieveUserQuotaBucket): UsageInfo {
 
   if (hasFraction) {
     const clamped = clamp(remainingFraction, 0, 1);
+    const usedPercent = ((1 - clamped) * 100).toFixed(1);
     return {
-      used: "unknown",
+      used: `${usedPercent}%`,
       remaining: `${buildProgressBar(clamped)} ${(clamped * 100).toFixed(1)}%`,
     };
   }

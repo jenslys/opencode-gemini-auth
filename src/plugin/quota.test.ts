@@ -86,6 +86,9 @@ describe("formatGeminiQuotaOutput", () => {
     // Verify used column shows calculated values when fraction + amount are available
     expect(output).toContain("60"); // 200 total - 140 remaining = 60 used (70% remaining)
     expect(output).toContain("100"); // 200 total - 100 remaining = 100 used (50% remaining)
+    // Verify used column shows percentage when only fraction is available
+    expect(output).toContain("20.0%"); // 100% - 80% remaining = 20% used
+    expect(output).toContain("5.0%"); // 100% - 95% remaining = 5% used
     expect(output.indexOf("Gemini 3 (1 model, 1 bucket)")).toBeLessThan(
       output.indexOf("Gemini 2.5 (2 models, 3 buckets)"),
     );
@@ -118,6 +121,8 @@ describe("formatGeminiQuotaOutput", () => {
     const output = formatGeminiQuotaOutput("test-project", buckets);
     expect(output).toContain("Type");
     expect(output).toContain("Used");
+    expect(output).toContain("10.0%"); // 100% - 90% = 10% used
+    expect(output).toContain("20.0%"); // 100% - 80% = 20% used
     expect(output).toContain("Gemini 2.5 (1 model, 2 buckets)");
     expect(output).toContain("REQUESTS");
     expect(output).toContain("TOKENS");
