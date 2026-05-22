@@ -9,6 +9,7 @@
  */
 
 import type { AccountState, CooldownState } from "./types";
+import { getCanonicalModelName } from "./models";
 
 export interface SelectOptions {
   model?: string;
@@ -26,7 +27,7 @@ export function selectBestAccount(
   if (enabled.length === 0) return undefined;
 
   const now = Date.now();
-  const model = options.model;
+  const model = options.model ? getCanonicalModelName(options.model) : undefined;
 
   // Check cooldown status per account
   const cooldownStatus = enabled.map((account) => {
@@ -52,25 +53,24 @@ export function selectBestAccount(
   );
   const candidates = quotaPreferred.length > 0 ? quotaPreferred : available;
 
-  // Health-weighted selection: pick the account with highest health score
-  // For simplicity in this phase, use deterministic highest-health selection
-  // (probabilistic weighting can be added later)
-  const best = candidates.reduce((a, b) =>
-    a.account.health.value >= b.account.health.value ? a : b,
-  );
-
-  // Among accounts with equal health, use LRU (lowest usageCount)
-  const topHealth = best.account.health.value;
-  const equalHealth = candidates.filter(
-    (c) => c.account.health.value === topHealth,
-  );
-  if (equalHealth.length > 1) {
-    return equalHealth.reduce((a, b) =>
-      a.account.usageCount <= b.account.usageCount ? a : b,
-    ).account;
+  // Weighted random selection among accounts with health > 0
+  const totalHealth = candidates.reduce((sum, c) => sum + Math.max(0, c.account.health.value), 0);
+  
+  if (totalHealth > 0) {
+    let random = Math.random() * totalHealth;
+    for (const c of candidates) {
+      const weight = Math.max(0, c.account.health.value);
+      if (random <= weight) {
+        return c.account;
+      }
+      random -= weight;
+    }
   }
 
-  return best.account;
+  // Fallback: pick the one with lowest usageCount (LRU)
+  return candidates.reduce((a, b) =>
+    a.account.usageCount <= b.account.usageCount ? a : b,
+  ).account;
 }
 
 /**

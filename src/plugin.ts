@@ -236,16 +236,32 @@ export const GeminiCLIOAuthPlugin = async (
               const response = await fetchWithRetry(transformed.request, transformed.init, selected.account.id);
               lastResponse = response;
 
-              // Report success/failure to pool
+              // Report result to pool (handles success, failure, and 401 circuit breaker)
+              latestGeminiPool!.reportResult(selected.account.id, response.status);
+
               if (response.ok) {
-                latestGeminiPool!.reportSuccess(selected.account.id);
                 break; // Success! Exit the loop.
               } else {
-                latestGeminiPool!.reportFailure(selected.account.id);
                 // Check for terminal 429 to cooldown this account
                 if (response.status === 429 && response.headers.get("X-Gemini-Terminal-429") === "true") {
                   const reason = response.headers.get("X-Gemini-429-Reason") ?? "UNKNOWN";
-                  latestGeminiPool!.cooldownAccount(selected.account.id, model ?? "all", 8000, reason);
+                  
+                  // Default 60s cooldown (C-02) or honor Retry-After
+                  let durationMs = 60000;
+                  const retryAfter = response.headers.get("Retry-After");
+                  if (retryAfter) {
+                    const parsed = parseInt(retryAfter, 10);
+                    if (!isNaN(parsed)) {
+                      durationMs = parsed * 1000;
+                    } else {
+                      const date = Date.parse(retryAfter);
+                      if (!isNaN(date)) {
+                        durationMs = Math.max(0, date - Date.now());
+                      }
+                    }
+                  }
+
+                  latestGeminiPool!.cooldownAccount(selected.account.id, model ?? "all", durationMs, reason);
                   
                   // Try to select another account
                   const nextAccount = latestGeminiPool!.select(model, url);

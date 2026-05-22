@@ -5,6 +5,7 @@
 
 import { HealthTracker } from "./health";
 import { selectBestAccount } from "./rotation";
+import { getCanonicalModelName } from "./models";
 import type {
   AccountState,
   GeminiAccount,
@@ -81,16 +82,28 @@ export class AccountPool {
   cooldownAccount(accountId: string, model: string, durationMs: number, reason: string): void {
     const state = this.states.get(accountId);
     if (!state) return;
-    state.cooldowns.set(model, {
+    const canonicalModel = getCanonicalModelName(model);
+    state.cooldowns.set(canonicalModel, {
       accountId,
       expiresAt: Date.now() + durationMs,
       reason,
-      model,
+      model: canonicalModel,
     });
     const tracker = this.trackers.get(accountId);
     if (tracker) {
       tracker.recordCooldown();
       state.health = tracker.compute();
+    }
+  }
+
+  reportResult(accountId: string, status: number, latencyMs?: number): void {
+    if (status >= 200 && status < 300) {
+      this.reportSuccess(accountId, latencyMs);
+    } else {
+      if (status === 401) {
+        this.toggleAccount(accountId, false);
+      }
+      this.reportFailure(accountId);
     }
   }
 
@@ -152,9 +165,14 @@ export class AccountPool {
     const existing = this.refreshLocks.get(accountId);
     if (existing) return existing;
 
-    const lock = refreshFn().finally(() => {
+    const timeout = new Promise<null>((_, reject) =>
+      setTimeout(() => reject(new Error("Refresh lock timeout after 30s")), 30000),
+    );
+
+    const lock = Promise.race([refreshFn(), timeout]).finally(() => {
       this.refreshLocks.delete(accountId);
-    });
+    }) as Promise<OAuthAuthDetails | null>;
+
     this.refreshLocks.set(accountId, lock);
     return lock;
   }

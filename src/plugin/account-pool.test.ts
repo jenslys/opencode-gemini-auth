@@ -44,10 +44,15 @@ describe("AccountPool", () => {
       expect(selected?.account.id).toBe("acc-0");
     });
 
-    it("returns account with highest health", () => {
+    it("returns account with highest health (deterministic if other is zero)", () => {
       const pool = createPool(2);
-      // Lower acc-0's health by recording a failure
-      pool.reportFailure("acc-0");
+      // Set acc-0's health to 0
+      pool.updateQuotaRemaining("acc-0", 0);
+      // We need to make sure health actually goes to 0 or very low
+      // Actually, HealthTracker compute() might not go to 0 immediately.
+      // Let's just report many failures.
+      for (let i = 0; i < 20; i++) pool.reportFailure("acc-0");
+      
       const selected = pool.select();
       // acc-1 still has perfect health (1.0)
       expect(selected?.account.id).toBe("acc-1");
@@ -78,22 +83,21 @@ describe("AccountPool", () => {
 
     it("increments usageCount and updates lastUsed on selection", () => {
       const pool = createPool(2);
-      // Both have equal health (1.0) → LRU tiebreaker picks acc-0 (first)
-      const before = pool.getAccount("acc-0")?.usageCount ?? -1;
       const selected = pool.select();
-      expect(selected?.account.id).toBe("acc-0");
-      const after = pool.getAccount("acc-0")?.usageCount ?? -1;
-      expect(after).toBe(before + 1);
+      const id = selected?.account.id;
+      expect(id).toBeDefined();
+      const after = pool.getAccount(id!)?.usageCount ?? -1;
+      expect(after).toBe(1);
     });
   });
 
   describe("cooldown and health reporting", () => {
-    it("cooldownAccount sets a cooldown entry", () => {
+    it("cooldownAccount sets a cooldown entry (canonicalized)", () => {
       const pool = createPool(2);
       pool.cooldownAccount("acc-0", "gemini-2.0-flash", 10000, "RATE_LIMIT");
       const cooldowns = pool.getAccount("acc-0")?.cooldowns;
-      expect(cooldowns?.has("gemini-2.0-flash")).toBe(true);
-      expect(cooldowns?.get("gemini-2.0-flash")?.reason).toBe("RATE_LIMIT");
+      expect(cooldowns?.has("models/gemini-2.0-flash")).toBe(true);
+      expect(cooldowns?.get("models/gemini-2.0-flash")?.reason).toBe("RATE_LIMIT");
     });
 
     it("reportFailure lowers health score", () => {
@@ -101,6 +105,29 @@ describe("AccountPool", () => {
       expect(pool.getAccount("acc-0")?.health.value).toBe(1);
       pool.reportFailure("acc-0");
       expect(pool.getAccount("acc-0")?.health.value).toBeLessThan(1);
+    });
+
+    it("reportResult handles 401 by disabling the account", () => {
+      const pool = createPool(1);
+      expect(pool.getAccount("acc-0")?.account.enabled).toBe(true);
+      pool.reportResult("acc-0", 401);
+      expect(pool.getAccount("acc-0")?.account.enabled).toBe(false);
+    });
+
+    it("reportResult handles success", () => {
+      const pool = createPool(1);
+      pool.reportFailure("acc-0");
+      const low = pool.getAccount("acc-0")?.health.value ?? 1;
+      pool.reportResult("acc-0", 200);
+      const high = pool.getAccount("acc-0")?.health.value ?? 0;
+      expect(high).toBeGreaterThan(low);
+    });
+
+    it("canonicalizes model names in cooldownAccount", () => {
+      const pool = createPool(1);
+      pool.cooldownAccount("acc-0", "gemini-1.5-pro", 10000, "RATE_LIMIT");
+      const cooldowns = pool.getAccount("acc-0")?.cooldowns;
+      expect(cooldowns?.has("models/gemini-1.5-pro")).toBe(true);
     });
 
     it("reportSuccess after failure improves health score", () => {

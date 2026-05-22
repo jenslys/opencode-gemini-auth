@@ -55,22 +55,34 @@ describe("selectBestAccount", () => {
     expect(selectBestAccount([acc])).toBe(acc);
   });
 
-  it("picks the account with higher health score", () => {
-    const low = makeAccountState("low", { health: makeScore({ value: 0.4 }) });
+  it("picks available account when others have zero health", () => {
+    const zero = makeAccountState("zero", { health: makeScore({ value: 0.0 }) });
     const high = makeAccountState("high", { health: makeScore({ value: 0.9 }) });
-    const result = selectBestAccount([low, high]);
+    const result = selectBestAccount([zero, high]);
     expect(result?.account.id).toBe("high");
+  });
+
+  it("canonicalizes model names in selectBestAccount", () => {
+    const now = Date.now();
+    const acc = makeAccountState("acc", {
+      cooldowns: new Map([["models/gemini-1.5-pro", makeCooldown("acc", now + 60000, "RATE_LIMIT", "models/gemini-1.5-pro")]])
+    });
+    const other = makeAccountState("other");
+    // gemini-1.5-pro should map to models/gemini-1.5-pro
+    const result = selectBestAccount([acc, other], { model: "gemini-1.5-pro" });
+    expect(result?.account.id).toBe("other");
   });
 
   it("picks the account with shortest remaining cooldown when all are cooldowned", () => {
     const now = Date.now();
+    const model = "models/gemini-2.0-flash";
     // long cooldown: expires far in future
     const longCd = makeAccountState("long", {
-      cooldowns: new Map([["gemini-2.0-flash", makeCooldown("long", now + 60000, "MODEL_CAPACITY_EXHAUSTED", "gemini-2.0-flash")]]),
+      cooldowns: new Map([[model, makeCooldown("long", now + 60000, "MODEL_CAPACITY_EXHAUSTED", model)]]),
     });
     // short cooldown: expires sooner
     const shortCd = makeAccountState("short", {
-      cooldowns: new Map([["gemini-2.0-flash", makeCooldown("short", now + 10000, "MODEL_CAPACITY_EXHAUSTED", "gemini-2.0-flash")]]),
+      cooldowns: new Map([[model, makeCooldown("short", now + 10000, "MODEL_CAPACITY_EXHAUSTED", model)]]),
     });
     const result = selectBestAccount([longCd, shortCd], { model: "gemini-2.0-flash" });
     expect(result?.account.id).toBe("short");
@@ -91,17 +103,18 @@ describe("selectBestAccount", () => {
 
   it("prefers available healthy account over cooldowned ones", () => {
     const now = Date.now();
+    const model = "models/gemini-2.0-flash";
     const cooldowned = makeAccountState("coold", {
-      cooldowns: new Map([["gemini-2.0-flash", makeCooldown("coold", now + 30000, "RATE_LIMIT", "gemini-2.0-flash")]]),
+      cooldowns: new Map([[model, makeCooldown("coold", now + 30000, "RATE_LIMIT", model)]]),
     });
     const healthy = makeAccountState("healthy", { health: makeScore({ value: 0.95 }) });
     const result = selectBestAccount([cooldowned, healthy], { model: "gemini-2.0-flash" });
     expect(result?.account.id).toBe("healthy");
   });
 
-  it("breaks ties by LRU (lowest usageCount wins)", () => {
-    const busy = makeAccountState("busy", { usageCount: 10, health: makeScore({ value: 0.9 }) });
-    const idle = makeAccountState("idle", { usageCount: 2, health: makeScore({ value: 0.9 }) });
+  it("breaks ties by LRU when weights are zero", () => {
+    const busy = makeAccountState("busy", { usageCount: 10, health: makeScore({ value: 0.0 }) });
+    const idle = makeAccountState("idle", { usageCount: 2, health: makeScore({ value: 0.0 }) });
     const result = selectBestAccount([busy, idle]);
     expect(result?.account.id).toBe("idle");
   });
@@ -115,11 +128,11 @@ describe("selectBestAccount", () => {
     expect(result?.account.id).toBe("high-quota");
   });
 
-  it("uses lowest health when all accounts have <20% quota since quota filter is skipped", () => {
-    const lower = makeAccountState("lower-health", { health: makeScore({ value: 0.3, quotaRemaining: 0.1 }) });
+  it("uses weighted random when all accounts have <20% quota", () => {
+    const zero = makeAccountState("zero-health", { health: makeScore({ value: 0.0, quotaRemaining: 0.1 }) });
     const higher = makeAccountState("higher-health", { health: makeScore({ value: 0.6, quotaRemaining: 0.05 }) });
-    const result = selectBestAccount([lower, higher]);
-    // both have <20% quota → skip quota filter → pick highest health
+    const result = selectBestAccount([zero, higher]);
+    // zero-health has 0 weight, so higher-health must be picked
     expect(result?.account.id).toBe("higher-health");
   });
 });
@@ -130,8 +143,8 @@ describe("explainSelection", () => {
     const b = makeAccountState("bob", { health: makeScore({ value: 0.5 }) });
     const selected = selectBestAccount([a, b]);
     const summary = explainSelection([a, b], selected);
-    expect(summary).toContain("selected: alice");
-    expect(summary).toContain("health: 0.9");
+    expect(summary).toContain("selected: ");
+    expect(summary).toContain(selected!.account.id);
   });
 
   it("reports no accounts available when selected is undefined", () => {
