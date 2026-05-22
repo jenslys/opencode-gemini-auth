@@ -3,7 +3,7 @@ import { accessTokenExpired, isOAuthAuth } from "./auth";
 import { resolveCachedAuth } from "./cache";
 import { ensureProjectContextForAccount, retrieveUserQuota } from "./project";
 import type { RetrieveUserQuotaBucket } from "./project/types";
-import { refreshAccessToken } from "./token";
+import { refreshAccessToken, refreshAccessTokenForAccount } from "./token";
 import type { AccountPool } from "./account-pool";
 import type { AccountState, GetAuth, PluginClient } from "./types";
 
@@ -440,7 +440,20 @@ async function formatMultiAccountQuotaOutput(
     }
 
     lines.push(`Account: ${accountLabel}`);
-    const accessToken = state.auth.access;
+    let accessToken = state.auth.access;
+    
+    // Attempt to refresh or retrieve access token if missing/expired and we have a refresh token
+    if ((!accessToken || accessTokenExpired(state.auth)) && state.auth.refresh) {
+      try {
+        const refreshed = await refreshAccessTokenForAccount(pool, state.account.id, client);
+        if (refreshed && refreshed.access) {
+          accessToken = refreshed.access;
+        }
+      } catch (error) {
+        // Fall back to missing token logic
+      }
+    }
+
     if (!accessToken) {
       lines.push("  (no access token available)");
       lines.push("");
