@@ -169,10 +169,28 @@ export const GeminiCLIOAuthPlugin = async (
 
               // Refresh token if needed
               if (accessTokenExpired(selected.auth)) {
-                const refreshed = await refreshAccessTokenForAccount(latestGeminiPool!, currentAccountId, client);
-                if (refreshed) {
-                  selected = latestGeminiPool!.getAccount(currentAccountId);
+                try {
+                  const refreshed = await refreshAccessTokenForAccount(latestGeminiPool!, currentAccountId, client);
+                  if (refreshed) {
+                    selected = latestGeminiPool!.getAccount(currentAccountId);
+                  }
+                } catch (error) {
+                  const message = error instanceof Error ? error.message : String(error);
+                  const isTimeout = message.includes("timeout");
+                  logGeminiDebugMessage(`Token refresh for account ${currentAccountId} failed: ${message}`);
+                  
+                  // Cooldown account and try next
+                  latestGeminiPool!.cooldownAccount(
+                    currentAccountId, 
+                    model ?? "all", 
+                    60000, 
+                    isTimeout ? "REFRESH_TIMEOUT" : "REFRESH_ERROR"
+                  );
+                  selected = latestGeminiPool!.select(model, url);
+                  if (!selected) break;
+                  continue;
                 }
+
                 if (!selected?.auth.access) {
                   // If this account can't refresh, cooldown and try next
                   latestGeminiPool!.cooldownAccount(currentAccountId, model ?? "all", 60000, "AUTH_FAILED");
