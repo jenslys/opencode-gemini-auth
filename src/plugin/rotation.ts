@@ -31,9 +31,18 @@ export function selectBestAccount(
 
   // Check cooldown status per account
   const cooldownStatus = enabled.map((account) => {
-    const cooldown = model ? account.cooldowns.get(model) : undefined;
-    const isCooldowned = cooldown && cooldown.expiresAt > now;
-    const remainingMs = isCooldowned ? cooldown!.expiresAt - now : 0;
+    const modelCooldown = model ? account.cooldowns.get(model) : undefined;
+    const globalCooldown = account.cooldowns.get("all");
+
+    const isModelCooldowned = modelCooldown && modelCooldown.expiresAt > now;
+    const isGlobalCooldowned = globalCooldown && globalCooldown.expiresAt > now;
+
+    const isCooldowned = isModelCooldowned || isGlobalCooldowned;
+    const remainingMs = Math.max(
+      isModelCooldowned ? modelCooldown!.expiresAt - now : 0,
+      isGlobalCooldowned ? globalCooldown!.expiresAt - now : 0,
+    );
+
     return { account, isCooldowned: !!isCooldowned, remainingMs };
   });
 
@@ -88,9 +97,9 @@ export function explainSelection(
   const model = options.model;
   const disabled = accounts.filter((a) => !a.account.enabled);
   const cooldowned = accounts.filter((a) => {
-    if (!model) return false;
-    const cd = a.cooldowns.get(model);
-    return cd && cd.expiresAt > now;
+    const modelCd = model ? a.cooldowns.get(getCanonicalModelName(model)) : undefined;
+    const globalCd = a.cooldowns.get("all");
+    return (modelCd && modelCd.expiresAt > now) || (globalCd && globalCd.expiresAt > now);
   });
 
   const parts: string[] = [];

@@ -135,6 +135,18 @@ describe("selectBestAccount", () => {
     // zero-health has 0 weight, so higher-health must be picked
     expect(result?.account.id).toBe("higher-health");
   });
+
+  it("honors global 'all' cooldown even if specific model is requested", () => {
+    const now = Date.now();
+    const globalCooldowned = makeAccountState("global-cd", {
+      cooldowns: new Map([["all", makeCooldown("global-cd", now + 60000, "AUTH_ERROR", "all")]])
+    });
+    const healthy = makeAccountState("healthy");
+    
+    // Requested model gemini-1.5-pro should be blocked by 'all' cooldown
+    const result = selectBestAccount([globalCooldowned, healthy], { model: "gemini-1.5-pro" });
+    expect(result?.account.id).toBe("healthy");
+  });
 });
 
 describe("explainSelection", () => {
@@ -160,6 +172,17 @@ describe("explainSelection", () => {
     const selected = selectBestAccount([disabled, healthy]);
     const summary = explainSelection([disabled, healthy], selected, {});
     expect(summary).toContain("1 disabled");
+    expect(summary).toContain("selected: healthy");
+  });
+
+  it("reports global cooldowns in explainSelection", () => {
+    const now = Date.now();
+    const globalCd = makeAccountState("global-cd", {
+      cooldowns: new Map([["all", makeCooldown("global-cd", now + 60000, "AUTH_ERROR", "all")]])
+    });
+    const healthy = makeAccountState("healthy");
+    const summary = explainSelection([globalCd, healthy], healthy, { model: "gemini-1.5-pro" });
+    expect(summary).toContain("1 in cooldown");
     expect(summary).toContain("selected: healthy");
   });
 });
