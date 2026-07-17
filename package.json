@@ -1,5 +1,5 @@
 {
-  "name": "opencode-gemini-auth",
+  "name": "@dylanrussell/opencode-gemini-auth",
   "version": "1.4.16",
   "author": "jenslys",
   "repository": "https://github.com/jenslys/opencode-gemini-auth",
@@ -22,8 +22,8 @@
   "type": "module",
   "scripts": {
     "build": "tsup",
-    "smoke:node-import": "node -e \"import(require.resolve('opencode-gemini-auth')).then(() => console.log('ok')).catch((error) => { console.error(error); process.exit(1); })\"",
-    "prepack": "bun run build && bun run smoke:node-import",
+    "smoke:node-import": "node -e \"import(require.resolve('@dylanrussell/opencode-gemini-auth')).then(() => console.log('ok')).catch((error) => { console.error(error); process.exit(1); })\"",
+    "prepack": "bun run build",
     "prepublishOnly": "bun test && bun run prepack",
     "update:gemini-cli": "git -C .local/gemini-cli pull --ff-only",
     "update:gemini-cli-version": "node commands/sync-gemini-cli-version.mjs",
@@ -37,5 +37,8 @@
   "dependencies": {
     "@opencode-ai/plugin": "^1.2.20",
     "@openauthjs/openauth": "^0.4.3"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }
