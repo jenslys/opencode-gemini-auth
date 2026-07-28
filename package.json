@@ -23,7 +23,7 @@
   "scripts": {
     "build": "tsup",
     "smoke:node-import": "node -e \"import(require.resolve('@dylanrussell/opencode-gemini-auth')).then(() => console.log('ok')).catch((error) => { console.error(error); process.exit(1); })\"",
-    "prepack": "bun run build",
+    "prepack": "bun run build && bun run smoke:node-import",
     "prepublishOnly": "bun test && bun run prepack",
     "update:gemini-cli": "git -C .local/gemini-cli pull --ff-only",
     "update:gemini-cli-version": "node commands/sync-gemini-cli-version.mjs",
