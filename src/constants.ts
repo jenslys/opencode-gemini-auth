@@ -24,8 +24,13 @@ export const GEMINI_REDIRECT_URI = "http://localhost:8085/oauth2callback";
 
 /**
  * Root endpoint for the Cloud Code Assist API which backs Gemini CLI traffic.
+ *
+ * May be overridden via the OPENCODE_GEMINI_CODE_ASSIST_ENDPOINT environment
+ * variable, e.g. to route traffic through a local compression proxy such as
+ * Headroom. When the env var is unset or empty, the default Google endpoint
+ * is used.
  */
-export const GEMINI_CODE_ASSIST_ENDPOINT = "https://cloudcode-pa.googleapis.com";
+export const GEMINI_CODE_ASSIST_ENDPOINT =\n  process.env.OPENCODE_GEMINI_CODE_ASSIST_ENDPOINT?.trim() || \"https://cloudcode-pa.googleapis.com\";
 
 /**
  * Provider identifier shared between the plugin loader and credential store.
