@@ -30,8 +30,7 @@ export const GEMINI_REDIRECT_URI = "http://localhost:8085/oauth2callback";
  * Headroom. When the env var is unset or empty, the default Google endpoint
  * is used.
  */
-export const GEMINI_CODE_ASSIST_ENDPOINT =
-  process.env.OPENCODE_GEMINI_CODE_ASSIST_ENDPOINT || "https://cloudcode-pa.googleapis.com";
+export const GEMINI_CODE_ASSIST_ENDPOINT =\n  process.env.OPENCODE_GEMINI_CODE_ASSIST_ENDPOINT?.trim() || \"https://cloudcode-pa.googleapis.com\";
 
 /**
  * Provider identifier shared between the plugin loader and credential store.
