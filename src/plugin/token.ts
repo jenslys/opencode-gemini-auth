@@ -20,18 +20,8 @@ import {
   resolveRetryDelayMs,
   wait,
 } from "./retry/helpers";
-import type { OAuthAuthDetails, PluginClient, RefreshParts } from "./types";
-
-interface OAuthErrorPayload {
-  error?:
-    | string
-    | {
-        code?: string;
-        status?: string;
-        message?: string;
-      };
-  error_description?: string;
-}
+import { storeCachedAuthForAccount } from "./cache";
+import { saveAccountsToDisk } from "./config-store";
 
 const refreshInFlight = new Map<string, Promise<OAuthAuthDetails | undefined>>();
 
@@ -248,4 +238,35 @@ async function fetchTokenRefresh(refreshToken: string): Promise<Response> {
   }
 
   return geminiFetch(tokenUrl, init);
+}
+
+/**
+ * Refreshes the access token for a specific account, updating the pool state directly.
+ * Uses the pool's withRefreshLock to prevent concurrent refresh races.
+ */
+export async function refreshAccessTokenForAccount(
+  pool: any,
+  accountId: string,
+  client: PluginClient,
+): Promise<OAuthAuthDetails | null> {
+  const state = pool.getAccount(accountId);
+  if (!state) return null;
+
+  return pool.withRefreshLock(accountId, async () => {
+    const currentAuth = state.auth;
+    if (!currentAuth.refresh) return null;
+
+    const refreshed = await refreshAccessToken(currentAuth, client);
+    if (refreshed) {
+      pool.updateAuth(accountId, refreshed);
+      storeCachedAuthForAccount(accountId, refreshed);
+      
+      // Persist the updated refresh token to disk
+      const accountsToSave = pool.getAccounts().map((s: any) => s.account);
+      await saveAccountsToDisk(accountsToSave).catch(e => {
+        console.error("[Gemini Auth] Failed to persist refreshed token:", e);
+      });
+    }
+    return refreshed ?? null;
+  });
 }

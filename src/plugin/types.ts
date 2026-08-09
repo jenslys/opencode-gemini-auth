@@ -97,3 +97,46 @@ export interface ProjectContextResult {
   auth: OAuthAuthDetails;
   effectiveProjectId: string;
 }
+
+// ── Multi-account types ──────────────────────────────────────────────
+
+export interface GeminiAccount {
+  id: string;                    // email from OAuth userinfo
+  email?: string;
+  refreshToken: string;
+  projectId?: string;            // optional per-account project override
+  enabled: boolean;
+}
+
+export interface HealthScore {
+  value: number;                 // 0.0 - 1.0
+  successRate: number;           // 0.0 - 1.0
+  quotaRemaining: number;        // 0.0 - 1.0
+  latencyScore: number;          // 0.0 - 1.0
+  cooldownScore: number;         // 0.0 - 1.0
+}
+
+export interface CooldownState {
+  accountId: string;
+  expiresAt: number;             // Date.now() + durationMs
+  reason: string;                // e.g. "MODEL_CAPACITY_EXHAUSTED", "QUOTA_EXHAUSTED"
+  model?: string;
+}
+
+export type RotationStrategy = "round-robin" | "lru" | "quota-aware" | "health-weighted";
+
+export interface AccountPoolConfig {
+  accounts: GeminiAccount[];
+  strategy?: RotationStrategy;
+}
+
+export interface AccountState {
+  account: GeminiAccount;
+  auth: OAuthAuthDetails;
+  projectContext?: ProjectContextResult;
+  cooldowns: Map<string, CooldownState>;  // key: model or "model|url"
+  lastUsed: number;              // timestamp
+  usageCount: number;
+  health: HealthScore;
+  refreshLock?: Promise<OAuthAuthDetails | null>;  // per-account refresh lock
+}

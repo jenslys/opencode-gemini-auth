@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 
-import { fetchWithRetry, retryInternals } from "./retry";
+import { buildRetryThrottleKey, fetchWithRetry, formatAllAccountsExhaustedMessage, retryInternals } from "./retry";
 import { classifyQuotaResponse } from "./retry/quota";
+import type { AccountState, CooldownState } from "./types";
 
 const originalSetTimeout = globalThis.setTimeout;
 const scheduledDelays: number[] = [];
@@ -294,6 +295,178 @@ describe("fetchWithRetry", () => {
     expect(scheduledDelays[0]).toBe(1500);
     expect(scheduledDelays[1]).toBeGreaterThan(0);
     expect(scheduledDelays[1]).toBeLessThanOrEqual(1500);
+  });
+
+  it("accepts accountId parameter without breaking existing behavior", async () => {
+    const fetchMock = mock(async () => {
+      if (fetchMock.mock.calls.length === 1) {
+        const err = new Error("socket reset") as Error & { code?: string };
+        err.code = "ECONNRESET";
+        throw err;
+      }
+      return new Response("ok", { status: 200 });
+    });
+    (globalThis as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
+
+    const response = await fetchWithRetry(
+      "https://example.com",
+      { method: "POST", body: JSON.stringify({ hello: "world" }) },
+      "test-account",
+    );
+
+    expect(response.status).toBe(200);
+    expect(fetchMock.mock.calls.length).toBe(2);
+  });
+
+  it("includes terminal 429 headers when accountId is provided", async () => {
+    const fetchMock = mock(async () => makeQuota429("QUOTA_EXHAUSTED"));
+    (globalThis as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
+
+    const response = await fetchWithRetry(
+      "https://example.com",
+      { method: "POST", body: JSON.stringify({ hello: "world" }) },
+      "acct-1",
+    );
+
+    expect(response.status).toBe(429);
+    expect(response.headers.get("X-Gemini-Terminal-429")).toBe("true");
+    expect(response.headers.get("X-Gemini-429-Reason")).toBe("QUOTA_EXHAUSTED");
+    expect(fetchMock.mock.calls.length).toBe(1);
+  });
+
+  it("includes terminal 429 headers for model capacity exhaustion", async () => {
+    const fetchMock = mock(async () => makeQuota429WithMessage(
+      "MODEL_CAPACITY_EXHAUSTED",
+      "No capacity available for model gemini-3-flash-preview on the server",
+      true,
+    ));
+    (globalThis as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
+
+    const response = await fetchWithRetry(
+      "https://example.com",
+      { method: "POST", body: JSON.stringify({ hello: "world" }) },
+      "acct-1",
+    );
+
+    expect(response.status).toBe(429);
+    expect(response.headers.get("X-Gemini-Terminal-429")).toBe("true");
+    expect(response.headers.get("X-Gemini-429-Reason")).toBe("MODEL_CAPACITY_EXHAUSTED");
+  });
+
+  it("passes accountId through to retry throttle key", () => {
+    const keyWith = buildRetryThrottleKey(
+      "https://example.com",
+      { body: JSON.stringify({ project: "p1", model: "m1" }) },
+      "acct-1",
+    );
+    const keyWithout = buildRetryThrottleKey(
+      "https://example.com",
+      { body: JSON.stringify({ project: "p1", model: "m1" }) },
+    );
+
+    expect(keyWith).toContain("account:acct-1");
+    expect(keyWithout).not.toContain("account:");
+    expect(keyWith).not.toBe(keyWithout);
+  });
+});
+
+describe("formatAllAccountsExhaustedMessage", () => {
+  it("formats single account with no cooldown", () => {
+    const now = Date.now();
+    const accounts: AccountState[] = [{
+      account: { id: "user1", refreshToken: "rt1", enabled: true },
+      auth: { type: "oauth", refresh: "rt1" },
+      cooldowns: new Map(),
+      lastUsed: now,
+      usageCount: 0,
+      health: { value: 1.0, successRate: 1.0, quotaRemaining: 1.0, latencyScore: 1.0, cooldownScore: 1.0 },
+    }];
+
+    const result = formatAllAccountsExhaustedMessage(accounts);
+    expect(result).toContain("All accounts exhausted.");
+    expect(result).toContain("user1");
+    expect(result).toContain("no cooldown");
+  });
+
+  it("lists active cooldowns with remaining time", () => {
+    const now = Date.now();
+    const cooldown: CooldownState = {
+      accountId: "user1",
+      expiresAt: now + 30000,
+      reason: "QUOTA_EXHAUSTED",
+      model: "gemini-2.5-flash",
+    };
+    const accounts: AccountState[] = [{
+      account: { id: "user1", refreshToken: "rt1", enabled: true },
+      auth: { type: "oauth", refresh: "rt1" },
+      cooldowns: new Map([["gemini-2.5-flash", cooldown]]),
+      lastUsed: now,
+      usageCount: 0,
+      health: { value: 1.0, successRate: 1.0, quotaRemaining: 1.0, latencyScore: 1.0, cooldownScore: 1.0 },
+    }];
+
+    const result = formatAllAccountsExhaustedMessage(accounts);
+    expect(result).toContain("user1");
+    expect(result).toContain("gemini-2.5-flash: QUOTA_EXHAUSTED");
+    expect(result).toContain("30s");
+  });
+
+  it("handles multiple accounts with mix of cooldowns and non-cooldowned", () => {
+    const now = Date.now();
+    const accounts: AccountState[] = [
+      {
+        account: { id: "user1", refreshToken: "rt1", enabled: true },
+        auth: { type: "oauth", refresh: "rt1" },
+        cooldowns: new Map(),
+        lastUsed: now,
+        usageCount: 0,
+        health: { value: 1.0, successRate: 1.0, quotaRemaining: 1.0, latencyScore: 1.0, cooldownScore: 1.0 },
+      },
+      {
+        account: { id: "user2", refreshToken: "rt2", enabled: true, email: "user2@test.com" },
+        auth: { type: "oauth", refresh: "rt2" },
+        cooldowns: new Map([
+          ["model-x", {
+            accountId: "user2",
+            expiresAt: now + 10000,
+            reason: "MODEL_CAPACITY_EXHAUSTED",
+            model: "model-x",
+          } as CooldownState],
+        ]),
+        lastUsed: now,
+        usageCount: 0,
+        health: { value: 0.5, successRate: 0.5, quotaRemaining: 0.5, latencyScore: 1.0, cooldownScore: 0.5 },
+      },
+    ];
+
+    const result = formatAllAccountsExhaustedMessage(accounts);
+    expect(result).toContain("user1: no cooldown");
+    expect(result).toContain("user2");
+    expect(result).toContain("model-x: MODEL_CAPACITY_EXHAUSTED");
+    expect(result).toContain("10s");
+    expect(result).toContain("All accounts exhausted.");
+  });
+
+  it("excludes expired cooldowns from output", () => {
+    const now = Date.now();
+    const expiredCooldown: CooldownState = {
+      accountId: "user1",
+      expiresAt: now - 1000,
+      reason: "QUOTA_EXHAUSTED",
+      model: "gemini-2.5-flash",
+    };
+    const accounts: AccountState[] = [{
+      account: { id: "user1", refreshToken: "rt1", enabled: true },
+      auth: { type: "oauth", refresh: "rt1" },
+      cooldowns: new Map([["gemini-2.5-flash", expiredCooldown]]),
+      lastUsed: now,
+      usageCount: 0,
+      health: { value: 1.0, successRate: 1.0, quotaRemaining: 1.0, latencyScore: 1.0, cooldownScore: 1.0 },
+    }];
+
+    const result = formatAllAccountsExhaustedMessage(accounts);
+    expect(result).toContain("no cooldown");
+    expect(result).not.toContain("QUOTA_EXHAUSTED");
   });
 });
 

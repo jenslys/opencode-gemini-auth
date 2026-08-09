@@ -1,9 +1,12 @@
 import { GEMINI_PROVIDER_ID } from "./constants";
 import { geminiFetch } from "./fetch";
-import { createOAuthAuthorizeMethod } from "./plugin/oauth-authorize";
+import { AccountPool } from "./plugin/account-pool";
+import { AccountManager } from "./plugin/account-manager";
 import { accessTokenExpired, isOAuthAuth } from "./plugin/auth";
+import { createOAuthAuthorizeMethod, createAddAccountAuthMethod } from "./plugin/oauth-authorize";
 import { resolveCachedAuth } from "./plugin/cache";
-import { ensureProjectContext, retrieveUserQuota } from "./plugin/project";
+import { loadAccountsFromDisk, saveAccountsToDisk } from "./plugin/config-store";
+import { ensureProjectContext, ensureProjectContextForAccount, retrieveUserQuota } from "./plugin/project";
 import {
   createGeminiQuotaTool,
   GEMINI_QUOTA_TOOL_NAME,
@@ -11,9 +14,11 @@ import {
 import { isGeminiDebugEnabled, logGeminiDebugMessage, startGeminiDebugRequest } from "./plugin/debug";
 import { maybeShowGeminiCapacityToast, maybeShowGeminiTestToast } from "./plugin/notify";
 import {
+  resolveAccountsFromProvider,
   resolveConfiguredProjectId,
   resolveConfiguredProjectIdFromClient,
   resolveConfiguredProjectIdFromConfig,
+  resolveProjectIdForAccount,
 } from "./plugin/provider";
 import {
   isGenerativeLanguageRequest,
@@ -23,8 +28,9 @@ import {
   transformGeminiResponse,
 } from "./plugin/request";
 import { fetchWithRetry } from "./plugin/retry";
-import { refreshAccessToken } from "./plugin/token";
+import { refreshAccessToken, refreshAccessTokenForAccount } from "./plugin/token";
 import type {
+  GeminiAccount,
   GetAuth,
   LoaderResult,
   OAuthAuthDetails,
@@ -43,6 +49,7 @@ Do not call other tools.
 let latestGeminiAuthResolver: GetAuth | undefined;
 let latestGeminiConfiguredProjectId: string | undefined;
 let latestGeminiUserAgentModel: string | undefined;
+let latestGeminiPool: AccountPool | undefined;
 
 /**
  * Registers the Gemini OAuth provider for Opencode, handling auth, request rewriting,
@@ -77,6 +84,7 @@ export const GeminiCLIOAuthPlugin = async (
         getAuthResolver: () => latestGeminiAuthResolver,
         getConfiguredProjectId: () => latestGeminiConfiguredProjectId,
         getUserAgentModel: () => latestGeminiUserAgentModel,
+        getPool: () => latestGeminiPool,
       }),
     },
     auth: {
@@ -92,6 +100,42 @@ export const GeminiCLIOAuthPlugin = async (
         normalizeProviderModelCosts(provider);
         const thinkingConfigDefaults = resolveThinkingConfigDefaults(provider);
 
+        // Initialize AccountPool from disk, then config accounts[], or pool-of-one
+        if (!latestGeminiPool) {
+          const diskAccounts = await loadAccountsFromDisk() || [];
+          const configAccounts = resolveAccountsFromProvider(provider) || [];
+          
+          // Merge accounts from both sources, deduplicating by ID (config accounts take precedence for overriding)
+          const mergedAccountsMap = new Map<string, GeminiAccount>();
+          
+          for (const acc of diskAccounts) {
+            mergedAccountsMap.set(acc.id, acc);
+          }
+          for (const acc of configAccounts) {
+            mergedAccountsMap.set(acc.id, acc);
+          }
+          
+          const accounts = Array.from(mergedAccountsMap.values());
+
+          if (accounts && accounts.length > 0) {
+            latestGeminiPool = new AccountPool({ accounts, strategy: "health-weighted" });
+            for (const account of accounts) {
+              // Hydrate the matching account from the global getAuth() if it's the primary one
+              if (auth.refresh && account.refreshToken === auth.refresh) {
+                latestGeminiPool.updateAuth(account.id, auth);
+              }
+            }
+          } else {
+            const singleAccount: GeminiAccount = {
+              id: auth.refresh.split("|")[0] || "default",
+              refreshToken: auth.refresh,
+              enabled: true,
+            };
+            latestGeminiPool = AccountPool.fromSingleAccount(singleAccount);
+            latestGeminiPool.updateAuth(singleAccount.id, auth);
+          }
+        }
+
         return {
           apiKey: "",
           async fetch(input, init) {
@@ -99,75 +143,176 @@ export const GeminiCLIOAuthPlugin = async (
               return geminiFetch(input, init);
             }
 
-            const latestAuth = await getAuth();
-            if (!isOAuthAuth(latestAuth)) {
-              return geminiFetch(input, init);
-            }
-
-            let authRecord = resolveCachedAuth(latestAuth);
-            if (accessTokenExpired(authRecord)) {
-              const refreshed = await refreshAccessToken(authRecord, client);
-              if (!refreshed) {
-                return geminiFetch(input, init);
-              }
-              authRecord = refreshed;
-            }
-
-            if (!authRecord.access) {
-              return geminiFetch(input, init);
-            }
-
-            const configuredProjectId = await resolveLatestConfiguredProjectId(provider);
+            // Select account from pool
             const requestTarget = parseGenerativeLanguageRequest(input);
-            const requestUserAgentModel = requestTarget?.effectiveModel;
-            if (requestUserAgentModel) {
-              latestGeminiUserAgentModel = requestUserAgentModel;
-            }
-            const projectContext = await ensureProjectContextOrThrow(
-              authRecord,
-              client,
-              configuredProjectId,
-              requestUserAgentModel,
-            );
-            await maybeShowGeminiTestToast(client, projectContext.effectiveProjectId);
-            await maybeLogAvailableQuotaModels(
-              authRecord.access,
-              projectContext.effectiveProjectId,
-              requestUserAgentModel,
-            );
-            const transformed = prepareGeminiRequest(
-              input,
-              init,
-              authRecord.access,
-              projectContext.effectiveProjectId,
-              thinkingConfigDefaults,
-            );
-            const debugContext = startGeminiDebugRequest({
-              originalUrl: toUrlString(input),
-              resolvedUrl: toUrlString(transformed.request),
-              method: transformed.init.method,
-              headers: transformed.init.headers,
-              body: transformed.init.body,
-              streaming: transformed.streaming,
-              projectId: projectContext.effectiveProjectId,
-            });
+            const model = requestTarget?.effectiveModel;
+            const url = toUrlString(input);
 
-            /**
-             * Retry transport/429 failures while preserving the requested model.
-             * We intentionally do not auto-downgrade model tiers to avoid misleading users.
-             */
-            const response = await fetchWithRetry(transformed.request, transformed.init);
+            let selected = latestGeminiPool?.select(model, url);
+            if (!selected) {
+              return geminiFetch(input, init);
+            }
+
+            const maxAttempts = latestGeminiPool ? latestGeminiPool.count() : 1;
+            let attempt = 0;
+            let lastResponse: Response | null = null;
+            let lastTransformedModel: string | undefined = undefined;
+            let lastDebugContext: any = null;
+            let lastProjectContext: any = null;
+
+            let lastTransformedStreaming: boolean = false;
+
+            while (attempt < maxAttempts) {
+              attempt++;
+
+              const currentAccountId = selected.account.id;
+
+              // Refresh token if needed
+              if (accessTokenExpired(selected.auth)) {
+                try {
+                  const refreshed = await refreshAccessTokenForAccount(latestGeminiPool!, currentAccountId, client);
+                  if (refreshed) {
+                    selected = latestGeminiPool!.getAccount(currentAccountId);
+                  }
+                } catch (error) {
+                  const message = error instanceof Error ? error.message : String(error);
+                  const isTimeout = message.includes("timeout");
+                  logGeminiDebugMessage(`Token refresh for account ${currentAccountId} failed: ${message}`);
+                  
+                  // Cooldown account and try next
+                  latestGeminiPool!.cooldownAccount(
+                    currentAccountId, 
+                    model ?? "all", 
+                    60000, 
+                    isTimeout ? "REFRESH_TIMEOUT" : "REFRESH_ERROR"
+                  );
+                  selected = latestGeminiPool!.select(model, url);
+                  if (!selected) break;
+                  continue;
+                }
+
+                if (!selected?.auth.access) {
+                  // If this account can't refresh, cooldown and try next
+                  latestGeminiPool!.cooldownAccount(currentAccountId, model ?? "all", 60000, "AUTH_FAILED");
+                  selected = latestGeminiPool!.select(model, url);
+                  if (!selected) break;
+                  continue;
+                }
+              }
+
+              const requestUserAgentModel = model;
+              if (requestUserAgentModel) {
+                latestGeminiUserAgentModel = requestUserAgentModel;
+              }
+
+              // Resolve project context for this account
+              const configuredProjectId = resolveProjectIdForAccount(
+                selected.account,
+                await resolveLatestConfiguredProjectId(provider),
+              );
+              const projectContext = await ensureProjectContextForAccount(
+                selected.auth,
+                client,
+                selected.account.id,
+                configuredProjectId,
+                requestUserAgentModel,
+              );
+              lastProjectContext = projectContext;
+
+              await maybeShowGeminiTestToast(client, projectContext.effectiveProjectId);
+              await maybeLogAvailableQuotaModels(
+                selected.auth.access!,
+                projectContext.effectiveProjectId,
+                requestUserAgentModel,
+              );
+
+              const transformed = prepareGeminiRequest(
+                input,
+                init,
+                selected.auth.access!,
+                projectContext.effectiveProjectId,
+                thinkingConfigDefaults,
+              );
+              lastTransformedModel = transformed.requestedModel;
+              lastTransformedStreaming = transformed.streaming;
+
+              const debugContext = startGeminiDebugRequest({
+                originalUrl: toUrlString(input),
+                resolvedUrl: toUrlString(transformed.request),
+                method: transformed.init.method,
+                headers: transformed.init.headers,
+                body: transformed.init.body,
+                streaming: transformed.streaming,
+                projectId: projectContext.effectiveProjectId,
+              });
+              lastDebugContext = debugContext;
+
+              /**
+               * Retry transport/429 failures while preserving the requested model.
+               * We intentionally do not auto-downgrade model tiers to avoid misleading users.
+               */
+              const response = await fetchWithRetry(transformed.request, transformed.init, selected.account.id);
+              lastResponse = response;
+
+              // Report result to pool (handles success, failure, and 401 circuit breaker)
+              latestGeminiPool!.reportResult(selected.account.id, response.status);
+
+              if (response.ok) {
+                break; // Success! Exit the loop.
+              } else {
+                // Check for terminal 429 to cooldown this account
+                if (response.status === 429 && response.headers.get("X-Gemini-Terminal-429") === "true") {
+                  const reason = response.headers.get("X-Gemini-429-Reason") ?? "UNKNOWN";
+                  
+                  // Default 60s cooldown (C-02) or honor Retry-After
+                  let durationMs = 60000;
+                  const retryAfter = response.headers.get("Retry-After");
+                  if (retryAfter) {
+                    const parsed = parseInt(retryAfter, 10);
+                    if (!isNaN(parsed)) {
+                      durationMs = parsed * 1000;
+                    } else {
+                      const date = Date.parse(retryAfter);
+                      if (!isNaN(date)) {
+                        durationMs = Math.max(0, date - Date.now());
+                      }
+                    }
+                  }
+
+                  latestGeminiPool!.cooldownAccount(selected.account.id, model ?? "all", durationMs, reason);
+                  
+                  // Try to select another account
+                  const nextAccount = latestGeminiPool!.select(model, url);
+                  if (!nextAccount || nextAccount.account.id === selected.account.id) {
+                    // No other healthy accounts available, break and return the 429
+                    break;
+                  }
+                  selected = nextAccount;
+                  continue; // Loop again with the new account
+                }
+                
+                // If it's not a terminal 429 (e.g. 500 server error, 400 bad request), 
+                // we don't rotate accounts. We just return the error.
+                break; 
+              }
+            }
+
+            // Fallback if loop finishes without a response
+            if (!lastResponse) {
+               return geminiFetch(input, init);
+            }
+
             await maybeShowGeminiCapacityToast(
               client,
-              response,
-              projectContext.effectiveProjectId,
-              transformed.requestedModel,
+              lastResponse,
+              lastProjectContext?.effectiveProjectId ?? "unknown",
+              lastTransformedModel,
             );
             return transformGeminiResponse(
-              response,
-              transformed.streaming,
-              debugContext,
-              transformed.requestedModel,
+              lastResponse,
+              lastTransformedStreaming,
+              lastDebugContext,
+              lastTransformedModel,
             );
           },
         };
@@ -181,6 +326,18 @@ export const GeminiCLIOAuthPlugin = async (
             getUserAgentModel: () => latestGeminiUserAgentModel,
           }),
         },
+        createAddAccountAuthMethod(() => {
+          if (!latestGeminiPool) {
+            throw new Error("Gemini plugin not yet loaded (pool is undefined)");
+          }
+          return new AccountManager({
+            pool: latestGeminiPool,
+            client,
+            onConfigUpdate: (accounts) => {
+              saveAccountsToDisk(accounts).catch(console.error);
+            }
+          });
+        }),
         {
           provider: GEMINI_PROVIDER_ID,
           label: "Manually enter API Key",
@@ -324,4 +481,21 @@ async function maybeLogAvailableQuotaModels(
   logGeminiDebugMessage(
     `Code Assist models visible via quota buckets (${projectId}): ${modelIds.join(", ")}`,
   );
+}
+
+/**
+ * Returns the current AccountPool instance (for testing and quota tool access).
+ */
+export function getLatestGeminiPool(): AccountPool | undefined {
+  return latestGeminiPool;
+}
+
+/**
+ * Resets plugin module state for testing.
+ */
+export function resetPluginState(): void {
+  latestGeminiPool = undefined;
+  latestGeminiAuthResolver = undefined;
+  latestGeminiConfiguredProjectId = undefined;
+  latestGeminiUserAgentModel = undefined;
 }

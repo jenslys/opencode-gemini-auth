@@ -100,6 +100,13 @@ export async function classifyQuotaResponse(response: Response): Promise<QuotaCo
     return { terminal: false, retryDelayMs, reason: errorInfo?.reason };
   }
 
+  if (typeof payload.message === "string") {
+    const msg = payload.message.toLowerCase();
+    if (msg.includes("exhausted your quota") || msg.includes("quota exceeded")) {
+      return { terminal: true, retryDelayMs, reason: "QUOTA_EXHAUSTED" };
+    }
+  }
+
   const quotaLimit = errorInfo?.metadata?.quota_limit?.toLowerCase() ?? "";
   if (quotaLimit.includes("perminute") || quotaLimit.includes("per minute")) {
     return { terminal: false, retryDelayMs: retryDelayMs ?? 60_000, reason: errorInfo?.reason };

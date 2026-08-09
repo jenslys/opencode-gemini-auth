@@ -96,6 +96,63 @@ or via environment variables:
 You can also set `OPENCODE_GEMINI_PROJECT_ID`, `GOOGLE_CLOUD_PROJECT`, or
 `GOOGLE_CLOUD_PROJECT_ID` to supply the project ID via environment variables.
 
+### Multi-Account Support
+
+This plugin supports using multiple Google accounts simultaneously to distribute quota usage and avoid `429 Quota Exhausted` errors. 
+
+When an account exhausts its quota for a requested model, the plugin places that account on a temporary cooldown and seamlessly retries your request with the next healthiest account in the background.
+
+#### Adding Accounts via UI (Recommended)
+
+1. Open your terminal and run `opencode auth login`.
+2. Choose **Google**.
+3. Select **Add Gemini Account**.
+4. Complete the OAuth flow in your browser.
+
+Accounts added via the UI are automatically persisted across Opencode restarts to `~/.config/opencode/gemini-auth.json`.
+
+#### Managing Accounts
+
+You can view the status of all your configured accounts by selecting **Manage Gemini Accounts** in the `opencode auth login` menu. This allows you to check health scores, active cooldowns, and manually enable or disable specific accounts.
+
+#### Configuring Accounts Manually (Fallback)
+
+If you prefer to configure your accounts manually or deploy the plugin in a headless environment, you can define them directly in your `opencode.json` under `provider.google.options.accounts`:
+
+```json
+{
+  "provider": {
+    "google": {
+      "options": {
+        "accounts": [
+          {
+            "id": "work",
+            "email": "user@company.com",
+            "refreshToken": "your-refresh-token-1",
+            "projectId": "prod-project"
+          },
+          {
+            "id": "personal",
+            "email": "user@gmail.com",
+            "refreshToken": "your-refresh-token-2"
+          }
+        ]
+      }
+    }
+  }
+}
+```
+
+*Note: Refresh tokens can be obtained from the `~/.config/opencode/gemini-auth.json` file after logging in at least once, or extracted from Opencode's credential store.*
+
+#### Rotation Strategy
+
+The plugin uses a hybrid **Cooldown-aware LRU with Quota Fallback** strategy:
+1. **Cooldowns:** Ignores any account that recently received a `429` error for the requested model.
+2. **Quota preference:** Prefers accounts with >20% remaining quota (based on `/gquota` data).
+3. **Health Scoring:** Weighs accounts based on their historical success rate, average latency, and cooldown frequency.
+4. **LRU Tiebreaker:** Uses the least recently used account to ensure fair round-robin distribution among healthy accounts.
+
 ### Proxy
 
 If your network requires an HTTP proxy for Google API calls, set

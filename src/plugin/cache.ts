@@ -63,3 +63,19 @@ export function clearCachedAuth(refresh?: string): void {
     authCache.delete(key);
   }
 }
+
+// ── Account ID-based cache ────────────────────────────────────────
+
+const authCacheByAccountId = new Map<string, OAuthAuthDetails>();
+
+export function resolveCachedAuthForAccount(accountId: string): OAuthAuthDetails | undefined {
+  return authCacheByAccountId.get(accountId);
+}
+
+export function storeCachedAuthForAccount(accountId: string, auth: OAuthAuthDetails): void {
+  authCacheByAccountId.set(accountId, auth);
+}
+
+export function clearCachedAuthForAccount(accountId: string): void {
+  authCacheByAccountId.delete(accountId);
+}

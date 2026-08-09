@@ -139,3 +139,11 @@ export function getCacheKey(auth: OAuthAuthDetails): string | undefined {
   const refresh = auth.refresh?.trim();
   return refresh ? refresh : undefined;
 }
+
+/**
+ * Builds a project context cache key for a specific account.
+ * Uses account ID (email) instead of packed refresh string.
+ */
+export function buildProjectCacheKeyForAccount(accountId: string, projectId?: string): string {
+  return `account:${accountId}|project:${projectId ?? "default"}`;
+}
