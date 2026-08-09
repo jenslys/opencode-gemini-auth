@@ -4,14 +4,20 @@
 ![Version](https://img.shields.io/npm/v/opencode-gemini-auth)
 
 > [!WARNING]
-> Google has stated that using Gemini CLI OAuth with third-party software is a
-> policy-violating use case and may trigger abuse detection or account
-> restrictions. It is unclear how aggressively this is enforced for projects
-> like this one, but you should assume there is real risk and use this plugin at
-> your own discretion. If you want the lowest-risk option, use Opencode with
-> your own Gemini API key instead.
+> Google deprecated Gemini Code Assist consumer account access on June 18,
+> 2026. The Gemini CLI OAuth flow no longer works for Gemini Code Assist for
+> individuals, Google AI Pro, or Google AI Ultra accounts: Google stopped
+> serving requests for these tiers and removed the "Login with Google" option.
+> Google says Gemini Code Assist Standard and Enterprise subscriptions remain
+> unchanged. The manual API key flow is also unaffected.
 >
-> See: https://github.com/google-gemini/gemini-cli/discussions/22970
+> Google has also stated that using Gemini CLI OAuth with third-party software
+> is a policy-violating use case and may trigger abuse detection or account
+> restrictions. Use this plugin at your own discretion. For the lowest-risk
+> option, use Opencode with your own Gemini API key instead.
+>
+> Deprecation details: https://developers.google.com/gemini-code-assist/docs/deprecations/code-assist-individuals
+> Policy discussion: https://github.com/google-gemini/gemini-cli/discussions/22970
 
 **Authenticate the Opencode CLI with your Google account.** This plugin enables
 you to use your existing Gemini plan and quotas (including the free tier)
