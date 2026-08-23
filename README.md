@@ -63,9 +63,9 @@ OpenCode V2:
 
 OpenCode V2 loads the package's native `./server` entrypoint. It registers the
 Gemini CLI OAuth method through `integration.transform` and rewrites Google
-provider requests and responses through the V2 session HTTP hooks. No
-`@opencode-ai/client` peer dependency is required because OpenCode supplies the
-plugin context.
+provider requests and responses through provider-scoped V2 session HTTP hooks.
+The entrypoint follows the current `Plugin.define` contract from
+`@opencode-ai/plugin@beta`.
 
 The V1 entrypoint remains unchanged. The V2 entrypoint currently covers login
 and model requests; the `/gquota` command, quota tool, retry transport, and TUI

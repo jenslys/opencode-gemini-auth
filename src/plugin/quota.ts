@@ -1,4 +1,3 @@
-import { tool } from "@opencode-ai/plugin";
 import { accessTokenExpired, isOAuthAuth } from "./auth";
 import { resolveCachedAuth } from "./cache";
 import { ensureProjectContext, retrieveUserQuota } from "./project";
@@ -21,7 +20,7 @@ export function createGeminiQuotaTool({
   getConfiguredProjectId,
   getUserAgentModel,
 }: GeminiQuotaToolDependencies) {
-  return tool({
+  return {
     description:
       "Retrieve current Gemini Code Assist quota usage for the authenticated user and project.",
     args: {},
@@ -78,7 +77,7 @@ export function createGeminiQuotaTool({
         return `Gemini quota lookup failed: ${message}`;
       }
     },
-  });
+  };
 }
 
 export function formatGeminiQuotaOutput(

@@ -8,5 +8,5 @@ export default defineConfig({
   clean: true,
   splitting: false,
   target: "node20",
-  noExternal: ["@opencode-ai/plugin", "@openauthjs/openauth"],
+  noExternal: ["@openauthjs/openauth"],
 });

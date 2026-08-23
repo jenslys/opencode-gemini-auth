@@ -1,6 +1,7 @@
+import { Integration, Plugin, type Credential } from "@opencode-ai/plugin";
+
 import { GEMINI_PROVIDER_ID } from "./constants";
 import type { GeminiTokenExchangeResult } from "./gemini/oauth";
-import { GeminiCLIOAuthPlugin } from "./plugin";
 import { createOAuthAuthorizeMethod } from "./plugin/oauth-authorize";
 import { resolveProjectContextFromAccessToken } from "./plugin/project";
 import { resolveConfiguredProjectId } from "./plugin/provider";
@@ -12,61 +13,9 @@ import {
 import { refreshAccessToken } from "./plugin/token";
 import type { OAuthAuthDetails, PluginClient } from "./plugin/types";
 
-const GEMINI_OAUTH_METHOD_ID = "gemini-cli";
+const GEMINI_OAUTH_METHOD_ID = Integration.MethodID.make("gemini-cli");
 
-interface V2Credential extends OAuthAuthDetails {
-  methodID: string;
-  access: string;
-  expires: number;
-  metadata?: Record<string, unknown>;
-}
-
-interface V2Context {
-  catalog: {
-    provider: {
-      get(input: { providerID: string }): Promise<{
-        data?: { settings?: Record<string, unknown> };
-      } | undefined>;
-    };
-  };
-  integration: {
-    transform(callback: (draft: {
-      method: {
-        update(input: {
-          integrationID: string;
-          method: { id: string; type: "oauth"; label: string };
-          authorize: () => Promise<{
-            url: string;
-            instructions: string;
-            mode: "auto" | "code";
-            callback: Promise<V2Credential> | ((code: string) => Promise<V2Credential>);
-          }>;
-          refresh: (credential: V2Credential) => Promise<V2Credential>;
-          label: (credential: V2Credential) => string | undefined;
-        }): void;
-      };
-    }) => void): Promise<unknown>;
-    connection: {
-      active(id: string): Promise<unknown>;
-      resolve(connection: unknown): Promise<V2Credential | { type: string } | undefined>;
-    };
-  };
-  session: {
-    hook(
-      name: "http.request" | "http.response",
-      callback: (event: V2RequestEvent | V2ResponseEvent) => Promise<void>,
-    ): Promise<unknown>;
-  };
-}
-
-interface V2RequestEvent {
-  model: { providerID: string; id: string };
-  request: Request;
-}
-
-interface V2ResponseEvent extends V2RequestEvent {
-  response: Response;
-}
+type V2Context = Pick<Plugin.Context, "catalog" | "integration" | "session">;
 
 const noPersistClient = {
   auth: { set: async () => {} },
@@ -113,12 +62,8 @@ export async function setupV2(ctx: V2Context): Promise<void> {
     });
   });
 
-  await ctx.session.hook("http.request", async (rawEvent) => {
-    const event = rawEvent as V2RequestEvent;
-    if (
-      event.model.providerID !== GEMINI_PROVIDER_ID ||
-      !isGenerativeLanguageRequest(event.request)
-    ) {
+  await ctx.session.hook("http.request", async (event) => {
+    if (!isGenerativeLanguageRequest(event.request)) {
       return;
     }
 
@@ -153,10 +98,9 @@ export async function setupV2(ctx: V2Context): Promise<void> {
       requestedModel: transformed.requestedModel,
     });
     event.request = request;
-  });
+  }, { providerID: GEMINI_PROVIDER_ID });
 
-  await ctx.session.hook("http.response", async (rawEvent) => {
-    const event = rawEvent as V2ResponseEvent;
+  await ctx.session.hook("http.response", async (event) => {
     const request = requests.get(event.request);
     if (!request) return;
     event.response = await transformGeminiResponse(
@@ -165,7 +109,7 @@ export async function setupV2(ctx: V2Context): Promise<void> {
       null,
       request.requestedModel,
     );
-  });
+  }, { providerID: GEMINI_PROVIDER_ID });
 }
 
 async function resolveV2ConfiguredProjectId(ctx: V2Context): Promise<string | undefined> {
@@ -174,14 +118,14 @@ async function resolveV2ConfiguredProjectId(ctx: V2Context): Promise<string | un
   try {
     const provider = await ctx.catalog.provider.get({ providerID: GEMINI_PROVIDER_ID });
     return resolveConfiguredProjectId({
-      provider: { options: provider?.data?.settings },
+      provider: { options: provider.data.settings },
     });
   } catch {
     return undefined;
   }
 }
 
-function toV2Credential(result: GeminiTokenExchangeResult): V2Credential {
+function toV2Credential(result: GeminiTokenExchangeResult): Credential.OAuth {
   if (result.type !== "success") throw new Error(result.error);
   return {
     type: "oauth",
@@ -193,14 +137,13 @@ function toV2Credential(result: GeminiTokenExchangeResult): V2Credential {
   };
 }
 
-function isV2Credential(value: unknown): value is V2Credential {
+function isV2Credential(value: unknown): value is Credential.OAuth {
   return !!value && typeof value === "object" &&
     (value as { type?: unknown }).type === "oauth" &&
     typeof (value as { methodID?: unknown }).methodID === "string";
 }
 
-export default {
+export default Plugin.define({
   id: "opencode.provider.google-gemini-cli",
-  setup: (ctx: unknown) => setupV2(ctx as V2Context),
-  server: GeminiCLIOAuthPlugin,
-};
+  setup: setupV2,
+});

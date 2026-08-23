@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { setupV2 } from "./plugin-v2";
+import plugin, { setupV2 } from "./plugin-v2";
 
 test("V2 plugin registers OAuth and rewrites Gemini requests and responses", async () => {
   let method: any;
@@ -13,13 +13,13 @@ test("V2 plugin registers OAuth and rewrites Gemini requests and responses", asy
     expires: Date.now() + 60_000,
   };
 
-  await setupV2({
+  const context = {
     catalog: {
       provider: { async get() { return { data: { settings: {} } }; } },
     },
     integration: {
-      async transform(callback) {
-        callback({ method: { update(input) { method = input; } } });
+      async transform(callback: (draft: any) => void) {
+        callback({ method: { update(input: any) { method = input; } } });
       },
       connection: {
         async active() { return { type: "credential" }; },
@@ -27,10 +27,13 @@ test("V2 plugin registers OAuth and rewrites Gemini requests and responses", asy
       },
     },
     session: {
-      async hook(name, callback) { hooks[name] = callback; },
+      async hook(name: string, callback: (event: any) => Promise<void>) { hooks[name] = callback; },
     },
-  });
+  };
+  await setupV2(context as unknown as Parameters<typeof setupV2>[0]);
 
+  expect(plugin.id).toBe("opencode.provider.google-gemini-cli");
+  expect(plugin.setup).toBe(setupV2);
   expect(method.integrationID).toBe("google");
   expect(method.method.id).toBe("gemini-cli");
 

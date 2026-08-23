@@ -27,7 +27,7 @@
   "type": "module",
   "scripts": {
     "build": "tsup",
-    "smoke:node-import": "node -e \"import(require.resolve('opencode-gemini-auth')).then(() => console.log('ok')).catch((error) => { console.error(error); process.exit(1); })\"",
+    "smoke:node-import": "node -e \"Promise.all([import('opencode-gemini-auth'), import('opencode-gemini-auth/server')]).then(() => console.log('ok')).catch((error) => { console.error(error); process.exit(1); })\"",
     "prepack": "bun run build && bun run smoke:node-import",
     "prepublishOnly": "bun test && bun run prepack",
     "update:gemini-cli": "git -C .local/gemini-cli pull --ff-only",
@@ -40,7 +40,7 @@
     "typescript": "^5.9.3"
   },
   "dependencies": {
-    "@opencode-ai/plugin": "^1.2.20",
+    "@opencode-ai/plugin": "beta",
     "@openauthjs/openauth": "^0.4.3"
   }
 }
