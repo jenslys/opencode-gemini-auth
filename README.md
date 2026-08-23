@@ -19,14 +19,16 @@
 > Deprecation details: https://developers.google.com/gemini-code-assist/docs/deprecations/code-assist-individuals
 > Policy discussion: https://github.com/google-gemini/gemini-cli/discussions/22970
 
-**Authenticate the Opencode CLI with your Google account.** This plugin enables
-you to use your existing Gemini plan and quotas (including the free tier)
-directly within Opencode.
+**Authenticate the Opencode CLI with an eligible organization-backed Google
+account.** Gemini CLI OAuth is now limited to Gemini Code Assist Standard and
+Enterprise subscriptions. Personal plans and the free tier must use the native
+Gemini API-key flow instead of this plugin.
 
 ## Prerequisites
 
 - [Opencode CLI](https://opencode.ai) installed.
-- A Google account with access to Gemini.
+- A Gemini Code Assist Standard or Enterprise subscription. Consumer Google
+  accounts are no longer supported by this OAuth flow.
 
 ## Installation
 
