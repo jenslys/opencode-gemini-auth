@@ -30,13 +30,24 @@ directly within Opencode.
 
 ## Installation
 
-Add the plugin to your Opencode configuration file
-(`~/.config/opencode/opencode.json` or similar):
+Add the plugin to your OpenCode configuration file
+(`~/.config/opencode/opencode.json` or similar).
+
+OpenCode V1:
 
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
   "plugin": ["opencode-gemini-auth@latest"]
+}
+```
+
+OpenCode V2:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugins": ["opencode-gemini-auth@latest"]
 }
 ```
 
@@ -50,22 +61,19 @@ Add the plugin to your Opencode configuration file
 
 ### OpenCode V2 Compatibility
 
-This plugin supports both OpenCode V1 and V2:
+OpenCode V2 loads the package's native `./server` entrypoint. It registers the
+Gemini CLI OAuth method through `integration.transform` and rewrites Google
+provider requests and responses through the V2 session HTTP hooks. No
+`@opencode-ai/client` peer dependency is required because OpenCode supplies the
+plugin context.
 
-- **V1**: `@opencode-ai/plugin` 1.x with `createOpencodeClient` (e.g. `import { createOpencodeClient } from "@opencode-ai/sdk"`).
-- **V2**: `@opencode-ai/client` Promise API with a global service — no `createOpencodeClient`. The client is discovered via the global service registration (XDG state dir) and uses `~/.config/opencode/opencode.json` for config.
-
-The same build works on both. `@opencode-ai/client >=1.17.0` is an optional peer dependency so V1 installs are unaffected.
-
-**Quota on V2** now works via embedded Google OAuth client secrets (see [`src/constants.ts`](src/constants.ts): `681255809395-...` / `GOCSPX-...`) — no extra env vars. The bucket merge (`retrieveUserQuota` + `fetchAvailableModels`, daily vs 5h window) matches `openchamber`'s `vscode` quotaProviders as shipped in CodeNomad [`e2b784f2`](https://github.com/sst/opencode). See CodeNomad V2 migration notes: https://opencode.ai and CodeNomad docs (`packages/opencode-plugin`).
+The V1 entrypoint remains unchanged. The V2 entrypoint currently covers login
+and model requests; the `/gquota` command, quota tool, retry transport, and TUI
+capacity notifications remain V1-only.
 
 ## Usage
 
-1. **Login**: Run the authentication command in your terminal:
-
-   ```bash
-   opencode auth login
-   ```
+1. **Login**: Run `opencode auth login` on V1 or `opencode2 auth login` on V2.
 
 2. **Select Provider**: Choose **Google** from the list.
 3. **Authenticate**: Select **OAuth with Google (Gemini CLI)**.
@@ -76,7 +84,7 @@ The same build works on both. `@opencode-ai/client >=1.17.0` is an optional peer
 
 Once authenticated, Opencode will use your Google account for Gemini requests.
 
-To check your current Gemini Code Assist quota buckets at any time, run:
+On V1, check your current Gemini Code Assist quota buckets with:
 
 ```bash
 /gquota
@@ -90,13 +98,27 @@ By default, the plugin attempts to provision or find a suitable Google Cloud
 project. To force a specific project, set the `projectId` in your configuration
 or via environment variables:
 
-**File:** `~/.config/opencode/opencode.json`
+OpenCode V1:
 
 ```json
 {
   "provider": {
     "google": {
       "options": {
+        "projectId": "your-specific-project-id"
+      }
+    }
+  }
+}
+```
+
+OpenCode V2:
+
+```json
+{
+  "providers": {
+    "google": {
+      "settings": {
         "projectId": "your-specific-project-id"
       }
     }

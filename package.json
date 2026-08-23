@@ -11,6 +11,11 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "default": "./dist/index.js"
+    },
+    "./server": {
+      "types": "./dist/server.d.ts",
+      "import": "./dist/server.js",
+      "default": "./dist/server.js"
     }
   },
   "files": [
@@ -37,14 +42,5 @@
   "dependencies": {
     "@opencode-ai/plugin": "^1.2.20",
     "@openauthjs/openauth": "^0.4.3"
-  },
-  "peerDependencies": {
-    "@opencode-ai/client": ">=1.17.0",
-    "@opencode-ai/plugin": "^1.2.20"
-  },
-  "peerDependenciesMeta": {
-    "@opencode-ai/client": {
-      "optional": true
-    }
   }
 }
