@@ -48,6 +48,17 @@ Add the plugin to your Opencode configuration file
 > a Gemini Code Assist subscription tier. You can still set `projectId` to
 > force a specific project.
 
+### OpenCode V2 Compatibility
+
+This plugin supports both OpenCode V1 and V2:
+
+- **V1**: `@opencode-ai/plugin` 1.x with `createOpencodeClient` (e.g. `import { createOpencodeClient } from "@opencode-ai/sdk"`).
+- **V2**: `@opencode-ai/client` Promise API with a global service — no `createOpencodeClient`. The client is discovered via the global service registration (XDG state dir) and uses `~/.config/opencode/opencode.json` for config.
+
+The same build works on both. `@opencode-ai/client >=1.17.0` is an optional peer dependency so V1 installs are unaffected.
+
+**Quota on V2** now works via embedded Google OAuth client secrets (see [`src/constants.ts`](src/constants.ts): `681255809395-...` / `GOCSPX-...`) — no extra env vars. The bucket merge (`retrieveUserQuota` + `fetchAvailableModels`, daily vs 5h window) matches `openchamber`'s `vscode` quotaProviders as shipped in CodeNomad [`e2b784f2`](https://github.com/sst/opencode). See CodeNomad V2 migration notes: https://opencode.ai and CodeNomad docs (`packages/opencode-plugin`).
+
 ## Usage
 
 1. **Login**: Run the authentication command in your terminal:
