@@ -1,4 +1,4 @@
-import { Integration, Plugin, type Credential } from "@opencode-ai/plugin";
+import { Integration, Plugin, type Credential } from "@opencode/plugin";
 
 import { GEMINI_PROVIDER_ID } from "./constants";
 import type { GeminiTokenExchangeResult } from "./gemini/oauth";
@@ -11,15 +11,15 @@ import {
   transformGeminiResponse,
 } from "./plugin/request";
 import { refreshAccessToken } from "./plugin/token";
-import type { OAuthAuthDetails, PluginClient } from "./plugin/types";
+import type { PluginClient } from "./plugin/types";
 
 const GEMINI_OAUTH_METHOD_ID = Integration.MethodID.make("gemini-cli");
 
-type V2Context = Pick<Plugin.Context, "catalog" | "integration" | "session">;
+type V2Context = Pick<Plugin.Context, "provider" | "integration" | "session">;
 
 const noPersistClient = {
   auth: { set: async () => {} },
-} as PluginClient;
+} satisfies PluginClient;
 
 export async function setupV2(ctx: V2Context): Promise<void> {
   const requests = new WeakMap<Request, { streaming: boolean; requestedModel?: string }>();
@@ -113,16 +113,12 @@ export async function setupV2(ctx: V2Context): Promise<void> {
 }
 
 async function resolveV2ConfiguredProjectId(ctx: V2Context): Promise<string | undefined> {
-  const fromEnvironment = resolveConfiguredProjectId();
-  if (fromEnvironment) return fromEnvironment;
-  try {
-    const provider = await ctx.catalog.provider.get({ providerID: GEMINI_PROVIDER_ID });
-    return resolveConfiguredProjectId({
-      provider: { options: provider.data.settings },
-    });
-  } catch {
-    return undefined;
-  }
+  const override = process.env.OPENCODE_GEMINI_PROJECT_ID?.trim();
+  if (override) return override;
+  const provider = await ctx.provider.get({ providerID: GEMINI_PROVIDER_ID });
+  return resolveConfiguredProjectId({
+    provider: { options: provider.data.settings },
+  });
 }
 
 function toV2Credential(result: GeminiTokenExchangeResult): Credential.OAuth {

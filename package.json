@@ -40,7 +40,7 @@
     "typescript": "^5.9.3"
   },
   "dependencies": {
-    "@opencode-ai/plugin": "beta",
+    "@opencode/plugin": "2.0.14",
     "@openauthjs/openauth": "^0.4.3"
   }
 }

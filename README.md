@@ -66,8 +66,10 @@ OpenCode V2:
 OpenCode V2 loads the package's native `./server` entrypoint. It registers the
 Gemini CLI OAuth method through `integration.transform` and rewrites Google
 provider requests and responses through provider-scoped V2 session HTTP hooks.
-The entrypoint follows the current `Plugin.define` contract from
-`@opencode-ai/plugin@beta`.
+The entrypoint targets OpenCode 2.0.14 and uses `Plugin.define` from
+`@opencode/plugin@2.0.14`. Project settings are read through `ctx.provider.get`.
+Provider lookup failures are reported instead of silently selecting another
+Google Cloud project.
 
 The V1 entrypoint remains unchanged. The V2 entrypoint currently covers login
 and model requests; the `/gquota` command, quota tool, retry transport, and TUI
@@ -75,7 +77,7 @@ capacity notifications remain V1-only.
 
 ## Usage
 
-1. **Login**: Run `opencode auth login` on V1 or `opencode2 auth login` on V2.
+1. **Login**: Run `opencode auth login` on V1 or open `/connect` in OpenCode V2.
 
 2. **Select Provider**: Choose **Google** from the list.
 3. **Authenticate**: Select **OAuth with Google (Gemini CLI)**.
@@ -130,6 +132,10 @@ OpenCode V2:
 
 You can also set `OPENCODE_GEMINI_PROJECT_ID`, `GOOGLE_CLOUD_PROJECT`, or
 `GOOGLE_CLOUD_PROJECT_ID` to supply the project ID via environment variables.
+
+In V2, `OPENCODE_GEMINI_PROJECT_ID` overrides the configured project. The
+generic Google variables are fallbacks used only when the provider has no
+configured project, with `GOOGLE_CLOUD_PROJECT` before `GOOGLE_CLOUD_PROJECT_ID`.
 
 ### Proxy
 
