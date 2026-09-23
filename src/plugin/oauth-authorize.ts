@@ -17,9 +17,10 @@ export function createOAuthAuthorizeMethod(options?: {
 }): () => Promise<{
   url: string;
   instructions: string;
-  method: string;
-  callback: (() => Promise<GeminiTokenExchangeResult>) | ((callbackUrl: string) => Promise<GeminiTokenExchangeResult>);
-}> {
+} & (
+  | { method: "auto"; callback: () => Promise<GeminiTokenExchangeResult> }
+  | { method: "code"; callback: (callbackUrl: string) => Promise<GeminiTokenExchangeResult> }
+)> {
   return async () => {
     const maybeHydrateProjectId = async (
       result: GeminiTokenExchangeResult,

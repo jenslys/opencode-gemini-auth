@@ -19,24 +19,37 @@
 > Deprecation details: https://developers.google.com/gemini-code-assist/docs/deprecations/code-assist-individuals
 > Policy discussion: https://github.com/google-gemini/gemini-cli/discussions/22970
 
-**Authenticate the Opencode CLI with your Google account.** This plugin enables
-you to use your existing Gemini plan and quotas (including the free tier)
-directly within Opencode.
+**Authenticate the Opencode CLI with an eligible organization-backed Google
+account.** Gemini CLI OAuth is now limited to Gemini Code Assist Standard and
+Enterprise subscriptions. Personal plans and the free tier must use the native
+Gemini API-key flow instead of this plugin.
 
 ## Prerequisites
 
 - [Opencode CLI](https://opencode.ai) installed.
-- A Google account with access to Gemini.
+- A Gemini Code Assist Standard or Enterprise subscription. Consumer Google
+  accounts are no longer supported by this OAuth flow.
 
 ## Installation
 
-Add the plugin to your Opencode configuration file
-(`~/.config/opencode/opencode.json` or similar):
+Add the plugin to your OpenCode configuration file
+(`~/.config/opencode/opencode.json` or similar).
+
+OpenCode V1:
 
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
   "plugin": ["opencode-gemini-auth@latest"]
+}
+```
+
+OpenCode V2:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugins": ["opencode-gemini-auth@latest"]
 }
 ```
 
@@ -48,13 +61,23 @@ Add the plugin to your Opencode configuration file
 > a Gemini Code Assist subscription tier. You can still set `projectId` to
 > force a specific project.
 
+### OpenCode V2 Compatibility
+
+OpenCode V2 loads the package's native `./server` entrypoint. It registers the
+Gemini CLI OAuth method through `integration.transform` and rewrites Google
+provider requests and responses through provider-scoped V2 session HTTP hooks.
+The entrypoint targets OpenCode 2.0.14 and uses `Plugin.define` from
+`@opencode/plugin@2.0.14`. Project settings are read through `ctx.provider.get`.
+Provider lookup failures are reported instead of silently selecting another
+Google Cloud project.
+
+The V1 entrypoint remains unchanged. The V2 entrypoint currently covers login
+and model requests; the `/gquota` command, quota tool, retry transport, and TUI
+capacity notifications remain V1-only.
+
 ## Usage
 
-1. **Login**: Run the authentication command in your terminal:
-
-   ```bash
-   opencode auth login
-   ```
+1. **Login**: Run `opencode auth login` on V1 or open `/connect` in OpenCode V2.
 
 2. **Select Provider**: Choose **Google** from the list.
 3. **Authenticate**: Select **OAuth with Google (Gemini CLI)**.
@@ -65,7 +88,7 @@ Add the plugin to your Opencode configuration file
 
 Once authenticated, Opencode will use your Google account for Gemini requests.
 
-To check your current Gemini Code Assist quota buckets at any time, run:
+On V1, check your current Gemini Code Assist quota buckets with:
 
 ```bash
 /gquota
@@ -79,7 +102,7 @@ By default, the plugin attempts to provision or find a suitable Google Cloud
 project. To force a specific project, set the `projectId` in your configuration
 or via environment variables:
 
-**File:** `~/.config/opencode/opencode.json`
+OpenCode V1:
 
 ```json
 {
@@ -93,8 +116,26 @@ or via environment variables:
 }
 ```
 
+OpenCode V2:
+
+```json
+{
+  "providers": {
+    "google": {
+      "settings": {
+        "projectId": "your-specific-project-id"
+      }
+    }
+  }
+}
+```
+
 You can also set `OPENCODE_GEMINI_PROJECT_ID`, `GOOGLE_CLOUD_PROJECT`, or
 `GOOGLE_CLOUD_PROJECT_ID` to supply the project ID via environment variables.
+
+In V2, `OPENCODE_GEMINI_PROJECT_ID` overrides the configured project. The
+generic Google variables are fallbacks used only when the provider has no
+configured project, with `GOOGLE_CLOUD_PROJECT` before `GOOGLE_CLOUD_PROJECT_ID`.
 
 ### Proxy
 

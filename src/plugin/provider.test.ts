@@ -1,12 +1,11 @@
 import { describe, expect, it } from "bun:test";
-import type { Config } from "@opencode-ai/sdk";
 
 import {
   resolveConfiguredProjectId,
   resolveConfiguredProjectIdFromClient,
   resolveConfiguredProjectIdFromConfig,
 } from "./provider";
-import type { PluginClient, Provider } from "./types";
+import type { PluginClient, PluginConfig, Provider } from "./types";
 
 describe("resolveConfiguredProjectId", () => {
   it("reads project id from provider options", () => {
@@ -34,7 +33,7 @@ describe("resolveConfiguredProjectId", () => {
           },
         },
       },
-    } satisfies Config;
+    } satisfies PluginConfig;
 
     expect(resolveConfiguredProjectIdFromConfig(config)).toBe("config-project");
     expect(
@@ -72,7 +71,7 @@ describe("resolveConfiguredProjectId", () => {
                 },
               },
             },
-          } satisfies Config,
+          } satisfies PluginConfig,
         }),
       },
     } satisfies PluginClient;

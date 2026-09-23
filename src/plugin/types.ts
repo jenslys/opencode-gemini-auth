@@ -1,6 +1,16 @@
 import type { GeminiTokenExchangeResult } from "../gemini/oauth";
-import type { Config } from "@opencode-ai/sdk";
-import type { ToolDefinition } from "@opencode-ai/plugin";
+
+export interface PluginConfig {
+  provider?: Record<string, { options?: Record<string, unknown> }>;
+  command?: Record<string, { description: string; template: string }>;
+  [key: string]: unknown;
+}
+
+interface ToolDefinition {
+  description: string;
+  args: Record<string, unknown>;
+  execute(args: unknown, context: unknown): Promise<string>;
+}
 
 export interface OAuthAuthDetails {
   type: "oauth";
@@ -58,7 +68,7 @@ export interface PluginClient {
   };
   config?: {
     get(options?: unknown): Promise<{
-      data?: Config;
+      data?: PluginConfig;
     } | undefined>;
   };
   tui?: {
@@ -78,7 +88,7 @@ export interface PluginContext {
 }
 
 export interface PluginResult {
-  config?: (config: Config) => Promise<void>;
+  config?: (config: PluginConfig) => Promise<void>;
   tool?: Record<string, ToolDefinition>;
   auth: {
     provider: string;
